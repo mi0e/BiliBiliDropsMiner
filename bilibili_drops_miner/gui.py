@@ -35,8 +35,10 @@ class MinerGUI:
     def __init__(self, root: ctk.CTk) -> None:
         self.root = root
         self.root.title("Bilibili \u76f4\u64ad\u6389\u5b9d\u52a9\u624b")
-        self.root.geometry("980x920")
-        self.root.minsize(800, 700)
+        self.root.geometry("980x630")
+        self.root.minsize(800, 500)
+        self._size_expanded = "980x920"
+        self._size_collapsed = "980x630"
 
         self.log_queue: "queue.Queue[str]" = queue.Queue()
         self.worker_thread: threading.Thread | None = None
@@ -195,7 +197,7 @@ class MinerGUI:
 
         # --- Log section (collapsible, default collapsed) ---
         self._log_frame = ctk.CTkFrame(self.root)
-        self._log_frame.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+        self._log_frame.pack(fill="x", padx=16, pady=(0, 16))
 
         log_header = ctk.CTkFrame(self._log_frame, fg_color="transparent")
         log_header.pack(fill="x", padx=12, pady=(8, 4))
@@ -315,10 +317,14 @@ class MinerGUI:
     def _toggle_log(self) -> None:
         if self._log_expanded:
             self.log_text.pack_forget()
+            self._log_frame.pack_configure(fill="x", expand=False)
             self._log_toggle_btn.configure(text="\u25b6 \u8fd0\u884c\u65e5\u5fd7")
+            self.root.geometry(self._size_collapsed)
         else:
+            self._log_frame.pack_configure(fill="both", expand=True)
             self.log_text.pack(fill="both", expand=True, padx=8, pady=(0, 8))
             self._log_toggle_btn.configure(text="\u25bc \u8fd0\u884c\u65e5\u5fd7")
+            self.root.geometry(self._size_expanded)
         self._log_expanded = not self._log_expanded
 
     def stop(self) -> None:
