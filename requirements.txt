@@ -1,0 +1,6 @@
+httpx
+websockets
+brotli
+colorama
+customtkinter
+apprise
