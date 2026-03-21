@@ -13,7 +13,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Bilibili Watch-Time Miner")
     parser.add_argument("--cookie", default="", help="Bilibili cookie string")
     parser.add_argument("--rooms", default="", help="Room ids, comma/newline separated")
-    parser.add_argument("--threads", type=int, default=1, help="Sessions per room (deprecated, no longer speeds up progress)")
+    parser.add_argument("--threads", type=int, default=1, help="Sessions per room")
     parser.add_argument(
         "--heartbeat-interval",
         type=int,

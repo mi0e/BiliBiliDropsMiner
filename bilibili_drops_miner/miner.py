@@ -44,6 +44,9 @@ class BilibiliWatchTimeMiner:
             await client.close()
 
     async def _thread_loop(self, plan: SessionPlan, thread_index: int) -> None:
+        # Stagger thread startups by 3s to avoid x25Kn session collision
+        if thread_index > 1:
+            await asyncio.sleep((thread_index - 1) * 3)
         client = BilibiliClient(self.config.cookie)
         self._clients.append(client)
         worker: LiveRoomWorker | None = None
