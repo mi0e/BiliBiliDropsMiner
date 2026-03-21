@@ -78,10 +78,10 @@ class MinerGUI:
         fields_frame = ctk.CTkFrame(config_frame, fg_color="transparent")
         fields_frame.pack(fill="x", padx=16, pady=(0, 4))
 
-        self._add_entry(fields_frame, 0, "Cookie", self.cookie_var)
-        self._add_entry(fields_frame, 1, "\u623f\u95f4\u53f7", self.rooms_var)
-        self._add_entry(fields_frame, 2, "\u4efb\u52a1 ID", self.task_ids_var)
-        self._add_entry(fields_frame, 3, "\u901a\u77e5 URL", self.notify_urls_var)
+        self._add_entry(fields_frame, 0, "Cookie", self.cookie_var, placeholder="\u5fc5\u586b: SESSDATA=xxx; bili_jct=xxx; DedeUserID=xxx")
+        self._add_entry(fields_frame, 1, "\u623f\u95f4\u53f7", self.rooms_var, placeholder="\u5fc5\u586b: \u76f4\u64ad\u95f4\u53f7\uff0c\u591a\u4e2a\u7528\u9017\u53f7\u5206\u9694")
+        self._add_entry(fields_frame, 2, "\u4efb\u52a1 ID", self.task_ids_var, placeholder="\u53ef\u7559\u7a7a: F12 \u4ece totalv2 \u8bf7\u6c42\u4e2d\u63d0\u53d6 task_ids")
+        self._add_entry(fields_frame, 3, "\u901a\u77e5 URL", self.notify_urls_var, placeholder="\u53ef\u7559\u7a7a: Apprise URL\uff0c\u5982 gotify://host/token")
 
         fields_frame.columnconfigure(1, weight=1)
 
@@ -211,12 +211,13 @@ class MinerGUI:
 
     @staticmethod
     def _add_entry(
-        parent: ctk.CTkFrame, row: int, label: str, text_var: ctk.StringVar
+        parent: ctk.CTkFrame, row: int, label: str, text_var: ctk.StringVar,
+        *, placeholder: str = "",
     ) -> None:
         ctk.CTkLabel(parent, text=label, width=100, anchor="w").grid(
             row=row, column=0, sticky="w", pady=3
         )
-        ctk.CTkEntry(parent, textvariable=text_var).grid(
+        ctk.CTkEntry(parent, textvariable=text_var, placeholder_text=placeholder).grid(
             row=row, column=1, sticky="ew", pady=3, padx=(4, 0)
         )
 
@@ -367,7 +368,7 @@ class MinerGUI:
         lines: list[str] = []
         for prefix, tasks in groups.items():
             if len(tasks) > 1:
-                cur = int(float(tasks[0].cur_value))
+                cur = int(max(float(t.cur_value) for t in tasks))
                 lines.append(f"{prefix} (\u5f53\u524d: {cur} \u5206\u949f)")
                 for task in tasks:
                     target = int(float(task.limit_value))
