@@ -35,8 +35,10 @@ class MinerGUI:
     def __init__(self, root: ctk.CTk) -> None:
         self.root = root
         self.root.title("Bilibili \u76f4\u64ad\u6389\u5b9d\u52a9\u624b")
-        self.root.geometry("980x920")
-        self.root.minsize(800, 700)
+        self.root.geometry("980x630")
+        self.root.minsize(800, 500)
+        self._size_expanded = "980x920"
+        self._size_collapsed = "980x630"
 
         self.log_queue: "queue.Queue[str]" = queue.Queue()
         self.worker_thread: threading.Thread | None = None
@@ -89,7 +91,7 @@ class MinerGUI:
         num_frame = ctk.CTkFrame(config_frame, fg_color="transparent")
         num_frame.pack(fill="x", padx=16, pady=(4, 4))
 
-        self._add_small_entry(num_frame, 0, "\u7ebf\u7a0b\u6570(\u5df2\u5931\u6548)", self.threads_var)
+        self._add_small_entry(num_frame, 0, "\u7ebf\u7a0b\u6570", self.threads_var)
         self._add_small_entry(num_frame, 1, "WS \u5fc3\u8df3(s)", self.heartbeat_var)
         self._add_small_entry(
             num_frame, 2, "\u91cd\u8fde\u5ef6\u8fdf(s)", self.reconnect_var
@@ -193,21 +195,30 @@ class MinerGUI:
         self.task_text.pack(fill="x", padx=8, pady=(0, 8))
         self.task_text.insert("1.0", "\u70b9\u51fb\u201c\u624b\u52a8\u5237\u65b0\u201d\u67e5\u770b\u4efb\u52a1\u8fdb\u5ea6")
 
-        # --- Log section ---
-        log_frame = ctk.CTkFrame(self.root)
-        log_frame.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+        # --- Log section (collapsible, default collapsed) ---
+        self._log_frame = ctk.CTkFrame(self.root)
+        self._log_frame.pack(fill="x", padx=16, pady=(0, 16))
 
-        log_label = ctk.CTkLabel(
-            log_frame,
-            text="\u8fd0\u884c\u65e5\u5fd7",
+        log_header = ctk.CTkFrame(self._log_frame, fg_color="transparent")
+        log_header.pack(fill="x", padx=12, pady=(8, 4))
+
+        self._log_toggle_btn = ctk.CTkButton(
+            log_header,
+            text="\u25b6 \u8fd0\u884c\u65e5\u5fd7",
             font=ctk.CTkFont(size=14, weight="bold"),
+            fg_color="transparent",
+            hover_color=("gray75", "gray30"),
+            text_color=("gray10", "gray90"),
+            anchor="w",
+            command=self._toggle_log,
         )
-        log_label.pack(anchor="w", padx=12, pady=(8, 4))
+        self._log_toggle_btn.pack(side="left")
 
         self.log_text = ctk.CTkTextbox(
-            log_frame, font=ctk.CTkFont(family="Consolas", size=12), wrap="word"
+            self._log_frame, font=ctk.CTkFont(family="Consolas", size=12), wrap="word"
         )
-        self.log_text.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        # Default collapsed - don't pack log_text
+        self._log_expanded = False
 
     @staticmethod
     def _add_entry(
@@ -302,6 +313,19 @@ class MinerGUI:
         logging.getLogger(__name__).info("\u6389\u5b9d\u52a9\u624b\u5df2\u542f\u52a8")
         self._schedule_config_sync()
         self._schedule_task_refresh()
+
+    def _toggle_log(self) -> None:
+        if self._log_expanded:
+            self.log_text.pack_forget()
+            self._log_frame.pack_configure(fill="x", expand=False)
+            self._log_toggle_btn.configure(text="\u25b6 \u8fd0\u884c\u65e5\u5fd7")
+            self.root.geometry(self._size_collapsed)
+        else:
+            self._log_frame.pack_configure(fill="both", expand=True)
+            self.log_text.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+            self._log_toggle_btn.configure(text="\u25bc \u8fd0\u884c\u65e5\u5fd7")
+            self.root.geometry(self._size_expanded)
+        self._log_expanded = not self._log_expanded
 
     def stop(self) -> None:
         if self.miner is not None:

@@ -1,5 +1,5 @@
 httpx
-websockets
+websockets>=13,<15
 brotli
 colorama
 customtkinter

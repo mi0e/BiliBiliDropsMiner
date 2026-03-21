@@ -148,7 +148,7 @@ class BilibiliClient:
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         )
-        self.live_buvid = cookie_map.get("LIVE_BUVID") or self._generate_live_buvid()
+        self.live_buvid = self._generate_live_buvid()
         self.live_uuid = str(uuid.uuid4())
         self._wbi_cache: tuple[str, str] | None = None
 
