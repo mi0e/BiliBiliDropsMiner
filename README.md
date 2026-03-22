@@ -69,7 +69,13 @@ python bilibili.py \
 
 ### Cookie
 
-浏览器登录 B 站 → F12 开发者工具 → 网络 / Network → 任意请求的 `Cookie` 请求头。
+浏览器登录 B 站 → F12 开发者工具 → 控制台 / Console → 输入以下命令回车：
+
+```js
+copy(document.cookie)
+```
+
+Cookie 已复制到剪贴板，直接粘贴到程序中即可。
 
 需要包含 `SESSDATA`、`bili_jct`、`DedeUserID` 等字段。
 
@@ -78,6 +84,12 @@ python bilibili.py \
 直播间 URL 中的数字，如 `https://live.bilibili.com/23612045` → 房间号为 `23612045`。
 
 ### 任务 ID
+
+#### 方法一：自动获取（推荐）
+
+GUI 中点击「自动获取任务ID」→ 在打开的浏览器中进入任意带有任务的直播间 → 工具自动获取 ids 或手动点击刷新任务 → task_ids 自动填充。
+
+#### 方法二：手动提取
 
 1. 前往 B 站活动任务页面
 2. F12 开发者工具 → 网络 / Network

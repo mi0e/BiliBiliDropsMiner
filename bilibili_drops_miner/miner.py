@@ -67,7 +67,7 @@ class BilibiliWatchTimeMiner:
             )
             task = asyncio.create_task(worker.run_forever())
             LOGGER.info(
-                "\u76f4\u64ad\u95f4 %s \u8fde\u63a5 #%s \u5df2\u542f\u52a8",
+                "直播间 %s 连接 #%s 已启动",
                 plan.room_id,
                 plan.session_no,
             )
@@ -85,7 +85,7 @@ class BilibiliWatchTimeMiner:
         try:
             asyncio.run(self._thread_loop(plan, thread_index))
         except Exception as exc:
-            LOGGER.exception("\u76f4\u64ad\u95f4\u8fde\u63a5\u5f02\u5e38\u9000\u51fa: %s", exc)
+            LOGGER.exception("直播间连接异常退出: %s", exc)
             self._stop_event.set()
 
     def run(self) -> None:
@@ -93,27 +93,27 @@ class BilibiliWatchTimeMiner:
         self._uid = uid
         self._uname = uname
         if uid:
-            LOGGER.info("\u767b\u5f55\u6210\u529f: %s (UID: %s)", uname, uid)
+            LOGGER.info("登录成功: %s (UID: %s)", uname, uid)
         else:
-            LOGGER.warning("Cookie \u672a\u767b\u5f55\uff0c\u5c06\u4ee5\u6e38\u5ba2\u6a21\u5f0f\u8fd0\u884c")
+            LOGGER.warning("Cookie 未登录，将以游客模式运行")
 
         plans = self._build_session_plans()
         LOGGER.info(
-            "\u5f00\u59cb\u8fd0\u884c: \u623f\u95f4 %s\uff0c\u6bcf\u623f\u95f4 %s \u4e2a\u8fde\u63a5",
+            "开始运行: 房间 %s，每房间 %s 个连接",
             self.config.room_ids,
             self.config.thread_count,
         )
         if self.config.task_ids:
             LOGGER.info(
-                "\u4efb\u52a1\u8ffd\u8e2a\u5df2\u5f00\u542f\uff0c\u6bcf %s \u79d2\u67e5\u8be2\u4e00\u6b21",
+                "任务追踪已开启，每 %s 秒查询一次",
                 self.config.task_query_interval_seconds,
             )
         else:
-            LOGGER.info("\u4efb\u52a1\u8ffd\u8e2a\u672a\u5f00\u542f\uff08\u672a\u8bbe\u7f6e\u4efb\u52a1 ID\uff09")
+            LOGGER.info("任务追踪未开启（未设置任务 ID）")
         if self._notifier.enabled:
-            LOGGER.info("\u901a\u77e5\u63a8\u9001\u5df2\u5f00\u542f\uff08%s \u4e2a\u5730\u5740\uff09", len(self.config.notify_urls))
+            LOGGER.info("通知推送已开启（%s 个地址）", len(self.config.notify_urls))
         elif self.config.notify_urls:
-            LOGGER.warning("\u901a\u77e5\u5730\u5740\u5df2\u914d\u7f6e\u4f46\u63a8\u9001\u670d\u52a1\u4e0d\u53ef\u7528")
+            LOGGER.warning("通知地址已配置但推送服务不可用")
 
         for thread_index, plan in enumerate(plans, start=1):
             thread = threading.Thread(
@@ -132,7 +132,7 @@ class BilibiliWatchTimeMiner:
                 for thread in self._threads:
                     thread.join(timeout=0.5)
         except KeyboardInterrupt:
-            LOGGER.info("\u6536\u5230\u505c\u6b62\u4fe1\u53f7\uff0c\u6b63\u5728\u505c\u6b62...")
+            LOGGER.info("收到停止信号，正在停止...")
             self.stop()
         finally:
             self.stop()

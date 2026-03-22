@@ -6,7 +6,6 @@ import logging
 import queue
 import re
 import threading
-import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox
 
@@ -34,7 +33,7 @@ class QueueLogHandler(logging.Handler):
 class MinerGUI:
     def __init__(self, root: ctk.CTk) -> None:
         self.root = root
-        self.root.title("Bilibili \u76f4\u64ad\u6389\u5b9d\u52a9\u624b")
+        self.root.title("Bilibili 直播掉宝助手")
         self.root.geometry("980x630")
         self.root.minsize(800, 500)
         self._size_expanded = "980x920"
@@ -71,7 +70,7 @@ class MinerGUI:
 
         title = ctk.CTkLabel(
             config_frame,
-            text="Bilibili \u76f4\u64ad\u6389\u5b9d\u52a9\u624b",
+            text="Bilibili 直播掉宝助手",
             font=ctk.CTkFont(size=20, weight="bold"),
         )
         title.pack(anchor="w", padx=16, pady=(12, 8))
@@ -80,10 +79,12 @@ class MinerGUI:
         fields_frame = ctk.CTkFrame(config_frame, fg_color="transparent")
         fields_frame.pack(fill="x", padx=16, pady=(0, 4))
 
-        self._add_entry(fields_frame, 0, "Cookie", self.cookie_var, placeholder="\u5fc5\u586b: SESSDATA=xxx; bili_jct=xxx; DedeUserID=xxx")
-        self._add_entry(fields_frame, 1, "\u623f\u95f4\u53f7", self.rooms_var, placeholder="\u5fc5\u586b: \u76f4\u64ad\u95f4\u53f7\uff0c\u591a\u4e2a\u7528\u9017\u53f7\u5206\u9694")
-        self._add_entry(fields_frame, 2, "\u4efb\u52a1 ID", self.task_ids_var, placeholder="\u53ef\u7559\u7a7a: F12 \u4ece totalv2 \u8bf7\u6c42\u4e2d\u63d0\u53d6 task_ids")
-        self._add_entry(fields_frame, 3, "\u901a\u77e5 URL", self.notify_urls_var, placeholder="\u53ef\u7559\u7a7a: Apprise URL\uff0c\u5982 gotify://host/token")
+        self._add_entry(fields_frame, 0, "Cookie", self.cookie_var, placeholder="必填: SESSDATA=xxx; bili_jct=xxx; DedeUserID=xxx")
+
+        self._add_entry(fields_frame, 1, "房间号", self.rooms_var, placeholder="必填: 直播间号，多个用逗号分隔")
+        self._add_entry(fields_frame, 2, "任务 ID", self.task_ids_var, placeholder="可留空: F12 从 totalv2 请求中提取 task_ids")
+
+        self._add_entry(fields_frame, 3, "通知 URL", self.notify_urls_var, placeholder="可留空: Apprise URL，如 gotify://host/token")
 
         fields_frame.columnconfigure(1, weight=1)
 
@@ -91,15 +92,15 @@ class MinerGUI:
         num_frame = ctk.CTkFrame(config_frame, fg_color="transparent")
         num_frame.pack(fill="x", padx=16, pady=(4, 4))
 
-        self._add_small_entry(num_frame, 0, "\u7ebf\u7a0b\u6570", self.threads_var)
-        self._add_small_entry(num_frame, 1, "WS \u5fc3\u8df3(s)", self.heartbeat_var)
+        self._add_small_entry(num_frame, 0, "线程数", self.threads_var)
+        self._add_small_entry(num_frame, 1, "WS 心跳(s)", self.heartbeat_var)
         self._add_small_entry(
-            num_frame, 2, "\u91cd\u8fde\u5ef6\u8fdf(s)", self.reconnect_var
+            num_frame, 2, "重连延迟(s)", self.reconnect_var
         )
         self._add_small_entry(
             num_frame,
             3,
-            "\u4efb\u52a1\u67e5\u8be2\u95f4\u9694(s)",
+            "任务查询间隔(s)",
             self.task_interval_var,
         )
 
@@ -109,19 +110,19 @@ class MinerGUI:
 
         ctk.CTkSwitch(
             toggle_frame,
-            text="\u8be6\u7ec6\u65e5\u5fd7",
+            text="详细日志",
             variable=self.verbose_var,
             width=40,
         ).pack(side="left", padx=(0, 16))
         ctk.CTkSwitch(
             toggle_frame,
-            text="\u7981\u7528 x25Kn \u5fc3\u8df3",
+            text="禁用 x25Kn 心跳",
             variable=self.disable_web_heartbeat_var,
             width=40,
         ).pack(side="left", padx=(0, 16))
         ctk.CTkSwitch(
             toggle_frame,
-            text="\u7981\u7528\u4efb\u52a1\u5b8c\u6210\u901a\u77e5",
+            text="禁用任务完成通知",
             variable=self.disable_task_notify_var,
             width=40,
         ).pack(side="left", padx=(0, 16))
@@ -132,7 +133,7 @@ class MinerGUI:
 
         ctk.CTkButton(
             btn_frame,
-            text="\u542f\u52a8",
+            text="启动",
             width=100,
             command=self.start,
             fg_color="#2ecc71",
@@ -140,7 +141,7 @@ class MinerGUI:
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             btn_frame,
-            text="\u505c\u6b62",
+            text="停止",
             width=100,
             command=self.stop,
             fg_color="#e74c3c",
@@ -148,19 +149,27 @@ class MinerGUI:
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             btn_frame,
-            text="\u52a0\u8f7d\u914d\u7f6e",
+            text="自动获取任务ID",
+            width=120,
+            command=self.auto_fetch_task_ids,
+            fg_color="#3498db",
+            hover_color="#2980b9",
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
+            btn_frame,
+            text="加载配置",
             width=100,
             command=self.load_config,
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             btn_frame,
-            text="\u4fdd\u5b58\u914d\u7f6e",
+            text="保存配置",
             width=100,
             command=self.save_config,
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             btn_frame,
-            text="\u6e05\u7a7a\u65e5\u5fd7",
+            text="清空日志",
             width=100,
             command=self.clear_logs,
             fg_color="#95a5a6",
@@ -176,12 +185,12 @@ class MinerGUI:
 
         ctk.CTkLabel(
             task_header,
-            text="\u4efb\u52a1\u8fdb\u5ea6",
+            text="任务进度",
             font=ctk.CTkFont(size=14, weight="bold"),
         ).pack(side="left")
         ctk.CTkButton(
             task_header,
-            text="\u624b\u52a8\u5237\u65b0",
+            text="手动刷新",
             width=80,
             command=self.refresh_tasks,
         ).pack(side="right")
@@ -193,7 +202,7 @@ class MinerGUI:
             height=180,
         )
         self.task_text.pack(fill="x", padx=8, pady=(0, 8))
-        self.task_text.insert("1.0", "\u70b9\u51fb\u201c\u624b\u52a8\u5237\u65b0\u201d\u67e5\u770b\u4efb\u52a1\u8fdb\u5ea6")
+        self.task_text.insert("1.0", "点击“手动刷新”查看任务进度")
 
         # --- Log section (collapsible, default collapsed) ---
         self._log_frame = ctk.CTkFrame(self.root)
@@ -204,7 +213,7 @@ class MinerGUI:
 
         self._log_toggle_btn = ctk.CTkButton(
             log_header,
-            text="\u25b6 \u8fd0\u884c\u65e5\u5fd7",
+            text="▶ 运行日志",
             font=ctk.CTkFont(size=14, weight="bold"),
             fg_color="transparent",
             hover_color=("gray75", "gray30"),
@@ -286,8 +295,8 @@ class MinerGUI:
     def start(self) -> None:
         if self.worker_thread and self.worker_thread.is_alive():
             messagebox.showinfo(
-                "\u8fd0\u884c\u4e2d",
-                "\u52a9\u624b\u5df2\u5728\u8fd0\u884c\u4e2d\u3002",
+                "运行中",
+                "助手已在运行中。",
             )
             return
         try:
@@ -296,7 +305,7 @@ class MinerGUI:
             config.validate()
             self.miner = BilibiliWatchTimeMiner(config)
         except Exception as exc:
-            messagebox.showerror("\u914d\u7f6e\u9519\u8bef", str(exc))
+            messagebox.showerror("配置错误", str(exc))
             return
 
         def runner() -> None:
@@ -310,7 +319,7 @@ class MinerGUI:
             target=runner, name="gui-main-worker", daemon=True
         )
         self.worker_thread.start()
-        logging.getLogger(__name__).info("\u6389\u5b9d\u52a9\u624b\u5df2\u542f\u52a8")
+        logging.getLogger(__name__).info("掉宝助手已启动")
         self._schedule_config_sync()
         self._schedule_task_refresh()
 
@@ -318,19 +327,19 @@ class MinerGUI:
         if self._log_expanded:
             self.log_text.pack_forget()
             self._log_frame.pack_configure(fill="x", expand=False)
-            self._log_toggle_btn.configure(text="\u25b6 \u8fd0\u884c\u65e5\u5fd7")
+            self._log_toggle_btn.configure(text="▶ 运行日志")
             self.root.geometry(self._size_collapsed)
         else:
             self._log_frame.pack_configure(fill="both", expand=True)
             self.log_text.pack(fill="both", expand=True, padx=8, pady=(0, 8))
-            self._log_toggle_btn.configure(text="\u25bc \u8fd0\u884c\u65e5\u5fd7")
+            self._log_toggle_btn.configure(text="▼ 运行日志")
             self.root.geometry(self._size_expanded)
         self._log_expanded = not self._log_expanded
 
     def stop(self) -> None:
         if self.miner is not None:
             self.miner.stop()
-            logging.getLogger(__name__).info("\u6b63\u5728\u505c\u6b62...")
+            logging.getLogger(__name__).info("正在停止...")
 
     def clear_logs(self) -> None:
         self.log_text.delete("1.0", "end")
@@ -338,11 +347,11 @@ class MinerGUI:
     def refresh_tasks(self) -> None:
         cookie = self.cookie_var.get().strip()
         if not cookie:
-            messagebox.showwarning("\u63d0\u793a", "\u8bf7\u5148\u586b\u5199 Cookie")
+            messagebox.showwarning("提示", "请先填写 Cookie")
             return
         task_ids = parse_task_ids(self.task_ids_var.get().strip())
         if not task_ids:
-            messagebox.showwarning("\u63d0\u793a", "\u8bf7\u5148\u586b\u5199\u4efb\u52a1 ID")
+            messagebox.showwarning("提示", "请先填写任务 ID")
             return
 
         def _do() -> None:
@@ -359,10 +368,90 @@ class MinerGUI:
                 self._task_progress_pending = True
             except Exception as exc:
                 logging.getLogger(__name__).warning(
-                    "\u5237\u65b0\u4efb\u52a1\u5931\u8d25: %s", exc
+                    "刷新任务失败: %s", exc
                 )
 
         threading.Thread(target=_do, daemon=True).start()
+
+    def _browser_sniff(self, url_keyword: str, hint: str, on_match) -> None:
+        """打开浏览器监听网络请求，匹配到 url_keyword 后调用 on_match(response)。"""
+
+        def _do() -> None:
+            try:
+                from playwright.async_api import async_playwright
+                import asyncio
+
+                async def run():
+                    done = []
+                    async with async_playwright() as p:
+                        browser = await p.chromium.launch(headless=False)
+                        context = await browser.new_context()
+                        page = await context.new_page()
+
+                        async def handle_response(response):
+                            if url_keyword in response.url:
+                                try:
+                                    await on_match(response)
+                                    done.append(True)
+                                except Exception:
+                                    pass
+
+                        page.on("response", handle_response)
+                        await page.goto("https://www.bilibili.com/", wait_until="domcontentloaded")
+                        logging.getLogger(__name__).info(hint)
+
+                        for _ in range(120):
+                            if done:
+                                break
+                            await asyncio.sleep(1)
+
+                        await browser.close()
+                    return bool(done)
+
+                return asyncio.run(run())
+            except ImportError:
+                messagebox.showerror(
+                    "依赖缺失",
+                    "Playwright 未安装，请运行：\n\n"
+                    "pip install playwright\n"
+                    "playwright install chromium",
+                )
+                return False
+            except Exception as exc:
+                logging.getLogger(__name__).exception("自动获取失败")
+                messagebox.showerror("错误", f"自动获取失败: {exc}")
+                return False
+
+        threading.Thread(target=_do, daemon=True).start()
+
+    def auto_fetch_task_ids(self) -> None:
+        ok = messagebox.askokcancel(
+            "自动获取任务ID",
+            "点击确定后会打开浏览器，请在 2 分钟内：\n\n"
+            "打开有当前任务的直播间即可自动获取，\n"
+            "或手动点击页面上的「刷新任务」按钮。\n\n"
+            "捕获成功后浏览器会自动关闭。",
+        )
+        if not ok:
+            return
+
+        async def on_match(response):
+            data = await response.json()
+            if data.get("code") != 0:
+                raise ValueError("response code != 0")
+            tasks = data.get("data", {}).get("list", [])
+            task_ids = [t.get("task_id") for t in tasks if t.get("task_id")]
+            if not task_ids:
+                raise ValueError("empty task list")
+            self.task_ids_var.set(",".join(task_ids))
+            logging.getLogger(__name__).info("任务ID获取成功: %s", ",".join(task_ids))
+            messagebox.showinfo("成功", f"已自动填入 {len(task_ids)} 个任务ID")
+
+        self._browser_sniff(
+            "/x/task/totalv2",
+            "已打开浏览器，请打开有当前任务的直播间或点击刷新任务",
+            on_match,
+        )
 
     def _schedule_task_refresh(self) -> None:
         if self.worker_thread is None or not self.worker_thread.is_alive():
@@ -377,9 +466,9 @@ class MinerGUI:
     @staticmethod
     def _format_task_progress(progresses: list) -> str:
         if not progresses:
-            return "\u65e0\u4efb\u52a1\u6570\u636e"
+            return "无任务数据"
 
-        _DURATION_RE = re.compile(r"^(.+?)\d+\u5206\u949f$")
+        _DURATION_RE = re.compile(r"^(.+?)\d+分钟$")
         groups: dict[str, list] = {}
         for task in progresses:
             match = _DURATION_RE.match(task.task_name)
@@ -393,7 +482,7 @@ class MinerGUI:
         for prefix, tasks in groups.items():
             if len(tasks) > 1:
                 cur = int(max(float(t.cur_value) for t in tasks))
-                lines.append(f"{prefix} (\u5f53\u524d: {cur} \u5206\u949f)")
+                lines.append(f"{prefix} (当前: {cur} 分钟)")
                 for task in tasks:
                     target = int(float(task.limit_value))
                     pct = min(
@@ -405,21 +494,21 @@ class MinerGUI:
                         ),
                     )
                     filled = int(bar_width * pct / 100)
-                    bar = "\u2588" * filled + "\u2591" * (bar_width - filled)
+                    bar = "█" * filled + "░" * (bar_width - filled)
                     if task.is_completed:
-                        status = " \u2714 \u5b8c\u6210"
+                        status = " ✔ 完成"
                     else:
                         status = f" {pct:>3}%"
-                    lines.append(f"  {bar} {target:>4}\u5206{status}")
+                    lines.append(f"  {bar} {target:>4}分{status}")
             else:
                 task = tasks[0]
                 target = int(float(task.limit_value))
                 cur = int(float(task.cur_value))
                 pct = min(100, int(cur / max(1, target) * 100))
                 filled = int(bar_width * pct / 100)
-                bar = "\u2588" * filled + "\u2591" * (bar_width - filled)
+                bar = "█" * filled + "░" * (bar_width - filled)
                 if task.is_completed:
-                    status = " \u2714 \u5b8c\u6210"
+                    status = " ✔ 完成"
                 else:
                     status = f" {pct:>3}%"
                 lines.append(f"{task.task_name} ({cur}/{target})")
@@ -482,10 +571,10 @@ class MinerGUI:
 
     def load_config(self) -> None:
         path = filedialog.askopenfilename(
-            title="\u52a0\u8f7d\u914d\u7f6e\u6587\u4ef6",
+            title="加载配置文件",
             filetypes=[
-                ("JSON \u6587\u4ef6", "*.json"),
-                ("\u6240\u6709\u6587\u4ef6", "*.*"),
+                ("JSON 文件", "*.json"),
+                ("所有文件", "*.*"),
             ],
         )
         if not path:
@@ -509,17 +598,17 @@ class MinerGUI:
                 not bool(data.get("notify_on_task_complete", True))
             )
             self.verbose_var.set(bool(data.get("verbose", False)))
-            logging.getLogger(__name__).info("\u914d\u7f6e\u5df2\u52a0\u8f7d: %s", path)
+            logging.getLogger(__name__).info("配置已加载: %s", path)
         except Exception as exc:
-            messagebox.showerror("\u52a0\u8f7d\u5931\u8d25", str(exc))
+            messagebox.showerror("加载失败", str(exc))
 
     def save_config(self) -> None:
         path = filedialog.asksaveasfilename(
-            title="\u4fdd\u5b58\u914d\u7f6e\u6587\u4ef6",
+            title="保存配置文件",
             defaultextension=".json",
             filetypes=[
-                ("JSON \u6587\u4ef6", "*.json"),
-                ("\u6240\u6709\u6587\u4ef6", "*.*"),
+                ("JSON 文件", "*.json"),
+                ("所有文件", "*.*"),
             ],
         )
         if not path:
@@ -542,9 +631,9 @@ class MinerGUI:
             Path(path).write_text(
                 json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
             )
-            logging.getLogger(__name__).info("\u914d\u7f6e\u5df2\u4fdd\u5b58: %s", path)
+            logging.getLogger(__name__).info("配置已保存: %s", path)
         except Exception as exc:
-            messagebox.showerror("\u4fdd\u5b58\u5931\u8d25", str(exc))
+            messagebox.showerror("保存失败", str(exc))
 
 
 def run_gui() -> int:
