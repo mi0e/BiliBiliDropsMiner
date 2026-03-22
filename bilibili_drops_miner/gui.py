@@ -374,53 +374,70 @@ class MinerGUI:
         threading.Thread(target=_do, daemon=True).start()
 
     def _browser_sniff(self, url_keyword: str, hint: str, on_match) -> None:
-        """打开浏览器监听网络请求，匹配到 url_keyword 后调用 on_match(response)。"""
+        """打开 Edge 浏览器监听网络请求，匹配到 url_keyword 后调用 on_match(json_data)。"""
 
         def _do() -> None:
             try:
-                from playwright.async_api import async_playwright
-                import asyncio
+                from selenium import webdriver
 
-                async def run():
-                    done = []
-                    async with async_playwright() as p:
-                        browser = await p.chromium.launch(headless=False)
-                        context = await browser.new_context()
-                        page = await context.new_page()
+                intercept_js = (
+                    "window.__captured_responses = [];\n"
+                    "(function() {\n"
+                    "  const origFetch = window.fetch;\n"
+                    "  window.fetch = async function(...args) {\n"
+                    "    const resp = await origFetch.apply(this, args);\n"
+                    "    const url = (typeof args[0] === 'string') ? args[0] : args[0].url;\n"
+                    "    if (url.includes('" + url_keyword + "')) {\n"
+                    "      try { const c = resp.clone(); const d = await c.json();\n"
+                    "        window.__captured_responses.push({url:url,data:d}); } catch(e) {}\n"
+                    "    }\n"
+                    "    return resp;\n"
+                    "  };\n"
+                    "  const origOpen = XMLHttpRequest.prototype.open;\n"
+                    "  const origSend = XMLHttpRequest.prototype.send;\n"
+                    "  XMLHttpRequest.prototype.open = function(m, u) {\n"
+                    "    this.__url = u; return origOpen.apply(this, arguments); };\n"
+                    "  XMLHttpRequest.prototype.send = function() {\n"
+                    "    this.addEventListener('load', function() {\n"
+                    "      if (this.__url && this.__url.includes('" + url_keyword + "')) {\n"
+                    "        try { window.__captured_responses.push(\n"
+                    "          {url:this.__url,data:JSON.parse(this.responseText)}); } catch(e) {}\n"
+                    "      }\n"
+                    "    });\n"
+                    "    return origSend.apply(this, arguments);\n"
+                    "  };\n"
+                    "})();"
+                )
 
-                        async def handle_response(response):
-                            if url_keyword in response.url:
-                                try:
-                                    await on_match(response)
-                                    done.append(True)
-                                except Exception:
-                                    pass
+                driver = webdriver.Edge()
+                try:
+                    driver.get("about:blank")
+                    driver.execute_cdp_cmd(
+                        "Page.addScriptToEvaluateOnNewDocument",
+                        {"source": intercept_js},
+                    )
+                    driver.get("https://www.bilibili.com/")
+                    logging.getLogger(__name__).info(hint)
 
-                        page.on("response", handle_response)
-                        await page.goto("https://www.bilibili.com/", wait_until="domcontentloaded")
-                        logging.getLogger(__name__).info(hint)
-
-                        for _ in range(120):
-                            if done:
-                                break
-                            await asyncio.sleep(1)
-
-                        await browser.close()
-                    return bool(done)
-
-                return asyncio.run(run())
+                    import time
+                    for _ in range(120):
+                        results = driver.execute_script(
+                            "return window.__captured_responses || [];"
+                        )
+                        if results:
+                            on_match(results[0]["data"])
+                            break
+                        time.sleep(1)
+                finally:
+                    driver.quit()
             except ImportError:
                 messagebox.showerror(
                     "依赖缺失",
-                    "Playwright 未安装，请运行：\n\n"
-                    "pip install playwright\n"
-                    "playwright install chromium",
+                    "Selenium 未安装，无法使用自动获取功能。",
                 )
-                return False
             except Exception as exc:
                 logging.getLogger(__name__).exception("自动获取失败")
                 messagebox.showerror("错误", f"自动获取失败: {exc}")
-                return False
 
         threading.Thread(target=_do, daemon=True).start()
 
@@ -435,8 +452,7 @@ class MinerGUI:
         if not ok:
             return
 
-        async def on_match(response):
-            data = await response.json()
+        def on_match(data):
             if data.get("code") != 0:
                 raise ValueError("response code != 0")
             tasks = data.get("data", {}).get("list", [])

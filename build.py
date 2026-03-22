@@ -109,6 +109,8 @@ def main() -> None:
         "customtkinter",
         "--hidden-import",
         "darkdetect",
+        "--collect-all",
+        "selenium",
     ]
 
     if args.target in ("gui", "all"):
