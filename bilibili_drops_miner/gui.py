@@ -79,12 +79,52 @@ class MinerGUI:
         fields_frame = ctk.CTkFrame(config_frame, fg_color="transparent")
         fields_frame.pack(fill="x", padx=16, pady=(0, 4))
 
-        self._add_entry(fields_frame, 0, "Cookie", self.cookie_var, placeholder="必填: SESSDATA=xxx; bili_jct=xxx; DedeUserID=xxx")
+        self._add_entry(
+            fields_frame,
+            0,
+            "Cookie",
+            self.cookie_var,
+            placeholder="必填: SESSDATA=xxx; bili_jct=xxx; DedeUserID=xxx",
+        )
+        ctk.CTkButton(
+            fields_frame,
+            text="自动获取",
+            width=80,
+            command=self.auto_fetch_cookie,
+            fg_color="#9b59b6",
+            hover_color="#8e44ad",
+        ).grid(row=0, column=2, padx=(4, 0), pady=3)
 
-        self._add_entry(fields_frame, 1, "房间号", self.rooms_var, placeholder="必填: 直播间号，多个用逗号分隔")
-        self._add_entry(fields_frame, 2, "任务 ID", self.task_ids_var, placeholder="可留空: F12 从 totalv2 请求中提取 task_ids")
+        self._add_entry(
+            fields_frame,
+            1,
+            "房间号",
+            self.rooms_var,
+            placeholder="必填: 直播间号，多个用逗号分隔",
+        )
+        self._add_entry(
+            fields_frame,
+            2,
+            "任务 ID",
+            self.task_ids_var,
+            placeholder="可留空: F12 从 totalv2 请求中提取 task_ids",
+        )
+        ctk.CTkButton(
+            fields_frame,
+            text="自动获取",
+            width=80,
+            command=self.auto_fetch_task_ids,
+            fg_color="#3498db",
+            hover_color="#2980b9",
+        ).grid(row=2, column=2, padx=(4, 0), pady=3)
 
-        self._add_entry(fields_frame, 3, "通知 URL", self.notify_urls_var, placeholder="可留空: Apprise URL，如 gotify://host/token")
+        self._add_entry(
+            fields_frame,
+            3,
+            "通知 URL",
+            self.notify_urls_var,
+            placeholder="可留空: Apprise URL，如 gotify://host/token",
+        )
 
         fields_frame.columnconfigure(1, weight=1)
 
@@ -94,9 +134,7 @@ class MinerGUI:
 
         self._add_small_entry(num_frame, 0, "线程数", self.threads_var)
         self._add_small_entry(num_frame, 1, "WS 心跳(s)", self.heartbeat_var)
-        self._add_small_entry(
-            num_frame, 2, "重连延迟(s)", self.reconnect_var
-        )
+        self._add_small_entry(num_frame, 2, "重连延迟(s)", self.reconnect_var)
         self._add_small_entry(
             num_frame,
             3,
@@ -149,14 +187,6 @@ class MinerGUI:
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             btn_frame,
-            text="自动获取任务ID",
-            width=120,
-            command=self.auto_fetch_task_ids,
-            fg_color="#3498db",
-            hover_color="#2980b9",
-        ).pack(side="left", padx=(0, 8))
-        ctk.CTkButton(
-            btn_frame,
             text="加载配置",
             width=100,
             command=self.load_config,
@@ -175,6 +205,18 @@ class MinerGUI:
             fg_color="#95a5a6",
             hover_color="#7f8c8d",
         ).pack(side="left", padx=(0, 8))
+
+        # --- Running indicator (sliding block on canvas) ---
+        self._progress_canvas = ctk.CTkCanvas(
+            config_frame,
+            height=4,
+            highlightthickness=0,
+            bg=config_frame.cget("fg_color")
+            if isinstance(config_frame.cget("fg_color"), str)
+            else config_frame.cget("fg_color")[1],
+        )
+        self._progress_running = False
+        # hidden until running
 
         # --- Task Progress section ---
         task_frame = ctk.CTkFrame(self.root)
@@ -231,8 +273,12 @@ class MinerGUI:
 
     @staticmethod
     def _add_entry(
-        parent: ctk.CTkFrame, row: int, label: str, text_var: ctk.StringVar,
-        *, placeholder: str = "",
+        parent: ctk.CTkFrame,
+        row: int,
+        label: str,
+        text_var: ctk.StringVar,
+        *,
+        placeholder: str = "",
     ) -> None:
         ctk.CTkLabel(parent, text=label, width=100, anchor="w").grid(
             row=row, column=0, sticky="w", pady=3
@@ -320,6 +366,7 @@ class MinerGUI:
         )
         self.worker_thread.start()
         logging.getLogger(__name__).info("掉宝助手已启动")
+        self._start_progress_animation()
         self._schedule_config_sync()
         self._schedule_task_refresh()
 
@@ -340,6 +387,52 @@ class MinerGUI:
         if self.miner is not None:
             self.miner.stop()
             logging.getLogger(__name__).info("正在停止...")
+        self._stop_progress_animation()
+
+    def _start_progress_animation(self) -> None:
+        self._progress_running = True
+        self._progress_pos = 0.0
+        self._progress_dir = 1
+        canvas = self._progress_canvas
+        canvas.pack(fill="x", padx=16, pady=(0, 4))
+
+        def _tick():
+            if not self._progress_running:
+                return
+            self._progress_pos += 0.004 * self._progress_dir
+            if self._progress_pos >= 1.0:
+                self._progress_pos = 1.0
+                self._progress_dir = -1
+            elif self._progress_pos <= 0.0:
+                self._progress_pos = 0.0
+                self._progress_dir = 1
+
+            w = canvas.winfo_width()
+            if w < 2:
+                self.root.after(20, _tick)
+                return
+            block_w = max(40, w // 6)
+            x = self._progress_pos * (w - block_w)
+            canvas.delete("all")
+            # track
+            canvas.create_rectangle(0, 1, w, 3, fill="#333333", outline="")
+            # sliding block
+            canvas.create_rectangle(
+                x,
+                0,
+                x + block_w,
+                4,
+                fill="#3498db",
+                outline="",
+            )
+            self.root.after(8, _tick)
+
+        _tick()
+
+    def _stop_progress_animation(self) -> None:
+        self._progress_running = False
+        self._progress_canvas.delete("all")
+        self._progress_canvas.pack_forget()
 
     def clear_logs(self) -> None:
         self.log_text.delete("1.0", "end")
@@ -351,11 +444,13 @@ class MinerGUI:
             return
         task_ids = parse_task_ids(self.task_ids_var.get().strip())
         if not task_ids:
-            messagebox.showwarning("提示", "请先填写任务 ID")
+            self._task_progress_pending = True
+            self._task_progress_result = "无任务数据（未填写任务 ID）"
             return
 
         def _do() -> None:
             try:
+
                 async def _query():
                     client = BilibiliClient(cookie)
                     try:
@@ -367,69 +462,195 @@ class MinerGUI:
                 self._task_progress_result = self._format_task_progress(progresses)
                 self._task_progress_pending = True
             except Exception as exc:
-                logging.getLogger(__name__).warning(
-                    "刷新任务失败: %s", exc
-                )
+                logging.getLogger(__name__).warning("刷新任务失败: %s", exc)
 
         threading.Thread(target=_do, daemon=True).start()
 
-    def _browser_sniff(self, url_keyword: str, hint: str, on_match) -> None:
-        """打开 Edge 浏览器监听网络请求，匹配到 url_keyword 后调用 on_match(json_data)。"""
+    def _browser_sniff(
+        self,
+        url_keyword: str | None,
+        hint: str,
+        on_network_match=None,
+        on_cookies=None,
+    ) -> None:
+        """打开 Edge 浏览器，可同时监听网络请求和/或获取 Cookie。
+
+        - url_keyword + on_network_match: 拦截匹配的网络响应
+        - on_cookies: 获取 bilibili 全部 cookie（含 httpOnly）
+        """
 
         def _do() -> None:
+            server = None
+            ext_dir = None
+            driver = None
             try:
+                import json
+                import os
+                import shutil
+                import tempfile
+                import time
+                from http.server import BaseHTTPRequestHandler, HTTPServer
+
                 from selenium import webdriver
 
-                intercept_js = (
-                    "window.__captured_responses = [];\n"
-                    "(function() {\n"
-                    "  const origFetch = window.fetch;\n"
-                    "  window.fetch = async function(...args) {\n"
-                    "    const resp = await origFetch.apply(this, args);\n"
-                    "    const url = (typeof args[0] === 'string') ? args[0] : args[0].url;\n"
-                    "    if (url.includes('" + url_keyword + "')) {\n"
-                    "      try { const c = resp.clone(); const d = await c.json();\n"
-                    "        window.__captured_responses.push({url:url,data:d}); } catch(e) {}\n"
-                    "    }\n"
-                    "    return resp;\n"
-                    "  };\n"
-                    "  const origOpen = XMLHttpRequest.prototype.open;\n"
-                    "  const origSend = XMLHttpRequest.prototype.send;\n"
-                    "  XMLHttpRequest.prototype.open = function(m, u) {\n"
-                    "    this.__url = u; return origOpen.apply(this, arguments); };\n"
-                    "  XMLHttpRequest.prototype.send = function() {\n"
-                    "    this.addEventListener('load', function() {\n"
-                    "      if (this.__url && this.__url.includes('" + url_keyword + "')) {\n"
-                    "        try { window.__captured_responses.push(\n"
-                    "          {url:this.__url,data:JSON.parse(this.responseText)}); } catch(e) {}\n"
-                    "      }\n"
-                    "    });\n"
-                    "    return origSend.apply(this, arguments);\n"
-                    "  };\n"
-                    "})();"
-                )
+                net_captured: list = []
+                cookie_captured: list = []
+                need_net = url_keyword and on_network_match
+                need_cookie = on_cookies is not None
 
-                driver = webdriver.Edge()
-                try:
-                    driver.get("about:blank")
-                    driver.execute_cdp_cmd(
-                        "Page.addScriptToEvaluateOnNewDocument",
-                        {"source": intercept_js},
+                class _Handler(BaseHTTPRequestHandler):
+                    def do_POST(self):
+                        length = int(self.headers.get("Content-Length", 0))
+                        body = self.rfile.read(length)
+                        try:
+                            data = json.loads(body)
+                            if data.get("type") == "__bili_cookies__":
+                                cookie_captured.append(data["cookies"])
+                            else:
+                                net_captured.append(data)
+                        except Exception:
+                            pass
+                        self.send_response(204)
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.end_headers()
+
+                    def do_OPTIONS(self):
+                        self.send_response(204)
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.send_header("Access-Control-Allow-Methods", "POST")
+                        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+                        self.end_headers()
+
+                    def log_message(self, *_a):
+                        pass
+
+                server = HTTPServer(("127.0.0.1", 0), _Handler)
+                port = server.server_address[1]
+                threading.Thread(target=server.serve_forever, daemon=True).start()
+
+                # ---- 创建临时扩展 ----
+                ext_dir = tempfile.mkdtemp(prefix="bili_sniff_")
+
+                manifest: dict = {
+                    "manifest_version": 3,
+                    "name": "BiliSniff",
+                    "version": "1.0",
+                    "host_permissions": ["http://127.0.0.1/*"],
+                    "content_scripts": [],
+                }
+
+                files_to_write: dict[str, str] = {}
+
+                # -- 网络拦截 --
+                if need_net:
+                    manifest["content_scripts"].append(
+                        {
+                            "matches": ["*://*.bilibili.com/*"],
+                            "js": ["inject.js"],
+                            "run_at": "document_start",
+                            "world": "MAIN",
+                        }
                     )
-                    driver.get("https://www.bilibili.com/")
-                    logging.getLogger(__name__).info(hint)
+                    manifest["content_scripts"].append(
+                        {
+                            "matches": ["*://*.bilibili.com/*"],
+                            "js": ["relay.js"],
+                            "run_at": "document_start",
+                        }
+                    )
+                    files_to_write["inject.js"] = (
+                        "(function(){\n"
+                        "var origFetch=window.fetch;\n"
+                        "window.fetch=async function(){\n"
+                        "  var resp=await origFetch.apply(this,arguments);\n"
+                        "  var url=(typeof arguments[0]==='string')?arguments[0]:arguments[0].url;\n"
+                        "  if(url.indexOf('" + url_keyword + "')!==-1){\n"
+                        "    try{var d=await resp.clone().json();\n"
+                        "      window.postMessage({type:'__bili_sniff__',payload:{url:url,data:d}},'*');\n"
+                        "    }catch(e){}\n"
+                        "  }\n"
+                        "  return resp;\n"
+                        "};\n"
+                        "var origOpen=XMLHttpRequest.prototype.open;\n"
+                        "var origSend=XMLHttpRequest.prototype.send;\n"
+                        "XMLHttpRequest.prototype.open=function(m,u){\n"
+                        "  this.__url=u;return origOpen.apply(this,arguments);};\n"
+                        "XMLHttpRequest.prototype.send=function(){\n"
+                        "  var self=this;\n"
+                        "  this.addEventListener('load',function(){\n"
+                        "    if(self.__url&&self.__url.indexOf('"
+                        + url_keyword
+                        + "')!==-1){\n"
+                        "      try{window.postMessage({type:'__bili_sniff__',\n"
+                        "        payload:{url:self.__url,data:JSON.parse(self.responseText)}},'*');\n"
+                        "      }catch(e){}\n"
+                        "    }\n"
+                        "  });\n"
+                        "  return origSend.apply(this,arguments);\n"
+                        "};\n"
+                        "})();"
+                    )
+                    files_to_write["relay.js"] = (
+                        "window.addEventListener('message',function(e){\n"
+                        "  if(e.data&&e.data.type==='__bili_sniff__'){\n"
+                        "    fetch('http://127.0.0.1:" + str(port) + "/',{\n"
+                        "      method:'POST',\n"
+                        "      headers:{'Content-Type':'application/json'},\n"
+                        "      body:JSON.stringify(e.data.payload)\n"
+                        "    }).catch(function(){});\n"
+                        "  }\n"
+                        "});"
+                    )
 
-                    import time
-                    for _ in range(120):
-                        results = driver.execute_script(
-                            "return window.__captured_responses || [];"
-                        )
-                        if results:
-                            on_match(results[0]["data"])
-                            break
-                        time.sleep(1)
-                finally:
-                    driver.quit()
+                # -- Cookie 获取 --
+                if need_cookie:
+                    manifest["permissions"] = ["cookies"]
+                    manifest["host_permissions"].append("*://*.bilibili.com/*")
+                    manifest["background"] = {"service_worker": "background.js"}
+                    files_to_write["background.js"] = (
+                        "function checkCookies(){\n"
+                        "  chrome.cookies.getAll({domain:'.bilibili.com'},function(cookies){\n"
+                        "    if(!cookies.some(function(c){return c.name==='SESSDATA';}))return;\n"
+                        "    fetch('http://127.0.0.1:" + str(port) + "/',{\n"
+                        "      method:'POST',\n"
+                        "      headers:{'Content-Type':'application/json'},\n"
+                        "      body:JSON.stringify({type:'__bili_cookies__',cookies:cookies})\n"
+                        "    }).catch(function(){});\n"
+                        "  });\n"
+                        "}\n"
+                        "checkCookies();\n"
+                        "setInterval(checkCookies,3000);"
+                    )
+
+                with open(
+                    os.path.join(ext_dir, "manifest.json"), "w", encoding="utf-8"
+                ) as f:
+                    json.dump(manifest, f)
+                for fname, content in files_to_write.items():
+                    with open(os.path.join(ext_dir, fname), "w", encoding="utf-8") as f:
+                        f.write(content)
+
+                # ---- 启动浏览器 ----
+                options = webdriver.EdgeOptions()
+                options.add_argument(f"--load-extension={ext_dir}")
+
+                driver = webdriver.Edge(options=options)
+                driver.get("https://www.bilibili.com/")
+                logging.getLogger(__name__).info(hint)
+
+                cookie_done = False
+                net_done = False
+                for _ in range(120):
+                    if need_cookie and not cookie_done and cookie_captured:
+                        on_cookies(cookie_captured[0])
+                        cookie_done = True
+                    if need_net and not net_done and net_captured:
+                        on_network_match(net_captured[0]["data"])
+                        net_done = True
+                    # 全部完成或只需要其中一个且已完成
+                    if (not need_cookie or cookie_done) and (not need_net or net_done):
+                        break
+                    time.sleep(1)
             except ImportError:
                 messagebox.showerror(
                     "依赖缺失",
@@ -438,6 +659,21 @@ class MinerGUI:
             except Exception as exc:
                 logging.getLogger(__name__).exception("自动获取失败")
                 messagebox.showerror("错误", f"自动获取失败: {exc}")
+            finally:
+                if driver:
+                    try:
+                        driver.quit()
+                    except Exception:
+                        pass
+                if server:
+                    try:
+                        server.shutdown()
+                    except Exception:
+                        pass
+                if ext_dir:
+                    import shutil
+
+                    shutil.rmtree(ext_dir, ignore_errors=True)
 
         threading.Thread(target=_do, daemon=True).start()
 
@@ -461,12 +697,37 @@ class MinerGUI:
                 raise ValueError("empty task list")
             self.task_ids_var.set(",".join(task_ids))
             logging.getLogger(__name__).info("任务ID获取成功: %s", ",".join(task_ids))
-            messagebox.showinfo("成功", f"已自动填入 {len(task_ids)} 个任务ID")
 
         self._browser_sniff(
             "/x/task/totalv2",
             "已打开浏览器，请打开有当前任务的直播间或点击刷新任务",
-            on_match,
+            on_network_match=on_match,
+        )
+
+    def auto_fetch_cookie(self) -> None:
+        ok = messagebox.askokcancel(
+            "自动获取Cookie",
+            "点击确定后会打开浏览器，请在浏览器中登录 B 站。\n\n"
+            "登录成功后 Cookie 会自动获取（含 httpOnly 字段），\n"
+            "浏览器会自动关闭。",
+        )
+        if not ok:
+            return
+
+        def on_cookies(cookies: list):
+            cookie_str = "; ".join(
+                f"{c['name']}={c['value']}" for c in cookies if c.get("name")
+            )
+            if not cookie_str:
+                messagebox.showwarning("提示", "未获取到 Cookie，请确认已登录 B 站")
+                return
+            self.cookie_var.set(cookie_str)
+            logging.getLogger(__name__).info("Cookie 获取成功")
+
+        self._browser_sniff(
+            None,
+            "已打开浏览器，正在获取 Cookie…",
+            on_cookies=on_cookies,
         )
 
     def _schedule_task_refresh(self) -> None:
