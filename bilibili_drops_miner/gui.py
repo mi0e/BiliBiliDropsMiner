@@ -6,7 +6,6 @@ import logging
 import queue
 import re
 import threading
-import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox
 
@@ -81,8 +80,10 @@ class MinerGUI:
         fields_frame.pack(fill="x", padx=16, pady=(0, 4))
 
         self._add_entry(fields_frame, 0, "Cookie", self.cookie_var, placeholder="\u5fc5\u586b: SESSDATA=xxx; bili_jct=xxx; DedeUserID=xxx")
+
         self._add_entry(fields_frame, 1, "\u623f\u95f4\u53f7", self.rooms_var, placeholder="\u5fc5\u586b: \u76f4\u64ad\u95f4\u53f7\uff0c\u591a\u4e2a\u7528\u9017\u53f7\u5206\u9694")
         self._add_entry(fields_frame, 2, "\u4efb\u52a1 ID", self.task_ids_var, placeholder="\u53ef\u7559\u7a7a: F12 \u4ece totalv2 \u8bf7\u6c42\u4e2d\u63d0\u53d6 task_ids")
+
         self._add_entry(fields_frame, 3, "\u901a\u77e5 URL", self.notify_urls_var, placeholder="\u53ef\u7559\u7a7a: Apprise URL\uff0c\u5982 gotify://host/token")
 
         fields_frame.columnconfigure(1, weight=1)
@@ -145,6 +146,14 @@ class MinerGUI:
             command=self.stop,
             fg_color="#e74c3c",
             hover_color="#c0392b",
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
+            btn_frame,
+            text="\u81ea\u52a8\u83b7\u53d6\u4efb\u52a1ID",
+            width=120,
+            command=self.auto_fetch_task_ids,
+            fg_color="#3498db",
+            hover_color="#2980b9",
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             btn_frame,
@@ -363,6 +372,86 @@ class MinerGUI:
                 )
 
         threading.Thread(target=_do, daemon=True).start()
+
+    def _browser_sniff(self, url_keyword: str, hint: str, on_match) -> None:
+        """打开浏览器监听网络请求，匹配到 url_keyword 后调用 on_match(response)。"""
+
+        def _do() -> None:
+            try:
+                from playwright.async_api import async_playwright
+                import asyncio
+
+                async def run():
+                    done = []
+                    async with async_playwright() as p:
+                        browser = await p.chromium.launch(headless=False)
+                        context = await browser.new_context()
+                        page = await context.new_page()
+
+                        async def handle_response(response):
+                            if url_keyword in response.url:
+                                try:
+                                    await on_match(response)
+                                    done.append(True)
+                                except Exception:
+                                    pass
+
+                        page.on("response", handle_response)
+                        await page.goto("https://www.bilibili.com/", wait_until="domcontentloaded")
+                        logging.getLogger(__name__).info(hint)
+
+                        for _ in range(120):
+                            if done:
+                                break
+                            await asyncio.sleep(1)
+
+                        await browser.close()
+                    return bool(done)
+
+                return asyncio.run(run())
+            except ImportError:
+                messagebox.showerror(
+                    "\u4f9d\u8d56\u7f3a\u5931",
+                    "Playwright \u672a\u5b89\u88c5\uff0c\u8bf7\u8fd0\u884c\uff1a\n\n"
+                    "pip install playwright\n"
+                    "playwright install chromium",
+                )
+                return False
+            except Exception as exc:
+                logging.getLogger(__name__).exception("\u81ea\u52a8\u83b7\u53d6\u5931\u8d25")
+                messagebox.showerror("\u9519\u8bef", f"\u81ea\u52a8\u83b7\u53d6\u5931\u8d25: {exc}")
+                return False
+
+        threading.Thread(target=_do, daemon=True).start()
+
+    def auto_fetch_task_ids(self) -> None:
+        ok = messagebox.askokcancel(
+            "\u81ea\u52a8\u83b7\u53d6\u4efb\u52a1ID",
+            "\u70b9\u51fb\u786e\u5b9a\u540e\u4f1a\u6253\u5f00\u6d4f\u89c8\u5668\uff0c\u8bf7\u5728 2 \u5206\u949f\u5185\uff1a\n\n"
+            "\u6253\u5f00\u6709\u5f53\u524d\u4efb\u52a1\u7684\u76f4\u64ad\u95f4\u5373\u53ef\u81ea\u52a8\u83b7\u53d6\uff0c\n"
+            "\u6216\u624b\u52a8\u70b9\u51fb\u9875\u9762\u4e0a\u7684\u300c\u5237\u65b0\u4efb\u52a1\u300d\u6309\u94ae\u3002\n\n"
+            "\u6355\u83b7\u6210\u529f\u540e\u6d4f\u89c8\u5668\u4f1a\u81ea\u52a8\u5173\u95ed\u3002",
+        )
+        if not ok:
+            return
+
+        async def on_match(response):
+            data = await response.json()
+            if data.get("code") != 0:
+                raise ValueError("response code != 0")
+            tasks = data.get("data", {}).get("list", [])
+            task_ids = [t.get("task_id") for t in tasks if t.get("task_id")]
+            if not task_ids:
+                raise ValueError("empty task list")
+            self.task_ids_var.set(",".join(task_ids))
+            logging.getLogger(__name__).info("\u4efb\u52a1ID\u83b7\u53d6\u6210\u529f: %s", ",".join(task_ids))
+            messagebox.showinfo("\u6210\u529f", f"\u5df2\u81ea\u52a8\u586b\u5165 {len(task_ids)} \u4e2a\u4efb\u52a1ID")
+
+        self._browser_sniff(
+            "/x/task/totalv2",
+            "\u5df2\u6253\u5f00\u6d4f\u89c8\u5668\uff0c\u8bf7\u6253\u5f00\u6709\u5f53\u524d\u4efb\u52a1\u7684\u76f4\u64ad\u95f4\u6216\u70b9\u51fb\u5237\u65b0\u4efb\u52a1",
+            on_match,
+        )
 
     def _schedule_task_refresh(self) -> None:
         if self.worker_thread is None or not self.worker_thread.is_alive():

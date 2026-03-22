@@ -4,3 +4,4 @@ brotli
 colorama
 customtkinter
 apprise
+playwright
