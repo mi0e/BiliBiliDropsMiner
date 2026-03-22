@@ -69,15 +69,15 @@ python bilibili.py \
 
 ### Cookie
 
-浏览器登录 B 站 → F12 开发者工具 → 控制台 / Console → 输入以下命令回车：
+登录 B 站后，按 F12 打开开发者工具，切换到 Network（网络） 面板。
 
-```js
-copy(document.cookie)
-```
+刷新页面（按 F5），让浏览器发送请求。
 
-Cookie 已复制到剪贴板，直接粘贴到程序中即可。
+在请求列表中，随便点击一个当前域名的主要请求（通常是第一个 HTML 文档或 API 接口）。
 
-需要包含 `SESSDATA`、`bili_jct`、`DedeUserID` 等字段。
+在右侧弹出的面板中找到 Headers（标头） -> Request Headers（请求标头）。
+
+往下找到一个名为 Cookie: 的字段，将 Cookie 后面的值复制出来即可。
 
 ### 房间号
 
