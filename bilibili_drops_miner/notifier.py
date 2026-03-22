@@ -21,7 +21,7 @@ class MultiPlatformNotifier:
             self._apprise = app
             self._enabled = True
         except Exception as exc:
-            LOGGER.warning("\u901a\u77e5\u63a8\u9001\u521d\u59cb\u5316\u5931\u8d25: %s", exc)
+            LOGGER.warning("通知推送初始化失败: %s", exc)
 
     def update_urls(self, service_urls: list[str] | None = None) -> None:
         self.service_urls = [
@@ -40,7 +40,7 @@ class MultiPlatformNotifier:
             self._apprise = app
             self._enabled = True
         except Exception as exc:
-            LOGGER.warning("\u901a\u77e5\u63a8\u9001\u521d\u59cb\u5316\u5931\u8d25: %s", exc)
+            LOGGER.warning("通知推送初始化失败: %s", exc)
 
     @property
     def enabled(self) -> bool:
@@ -52,5 +52,5 @@ class MultiPlatformNotifier:
         try:
             return bool(self._apprise.notify(title=title, body=body))  # type: ignore[union-attr]
         except Exception as exc:
-            LOGGER.warning("\u901a\u77e5\u53d1\u9001\u5931\u8d25: %s", exc)
+            LOGGER.warning("通知发送失败: %s", exc)
             return False

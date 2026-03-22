@@ -147,7 +147,7 @@ class LiveRoomWorker:
                 raise
             except Exception as exc:
                 self._log_warning(
-                    "\u76f4\u64ad\u95f4 %s \u8fde\u63a5\u65ad\u5f00: %s",
+                    "直播间 %s 连接断开: %s",
                     self.room_id,
                     exc,
                     primary_only=True,
@@ -172,7 +172,7 @@ class LiveRoomWorker:
         async with websockets.connect(
             uri, ping_interval=None, max_size=4 * 1024 * 1024
         ) as ws:
-            self._log_info("\u76f4\u64ad\u95f4 %s \u5df2\u8fde\u63a5", self.room_id, primary_only=True)
+            self._log_info("直播间 %s 已连接", self.room_id, primary_only=True)
             await ws.send(_build_packet(auth_payload, operation=7, version=1))
 
             heartbeat_task = asyncio.create_task(self._heartbeat_loop(ws))
@@ -230,7 +230,7 @@ class LiveRoomWorker:
                     session = await self.client.live_trace_enter(self.room_id)
                     wait_seconds = max(5, int(session.heartbeat_interval))
                     self._log_info(
-                        "\u76f4\u64ad\u95f4 %s \u89c2\u770b\u65f6\u957f\u4e0a\u62a5\u5df2\u542f\u52a8",
+                        "直播间 %s 观看时长上报已启动",
                         self.room_id,
                         primary_only=True,
                     )
@@ -248,7 +248,7 @@ class LiveRoomWorker:
                 raise
             except Exception as exc:
                 self._log_warning(
-                    "\u76f4\u64ad\u95f4 %s \u89c2\u770b\u65f6\u957f\u4e0a\u62a5\u5931\u8d25: %s", self.room_id, exc, primary_only=True
+                    "直播间 %s 观看时长上报失败: %s", self.room_id, exc, primary_only=True
                 )
                 session = None
                 wait_seconds = max(5, self.config.reconnect_delay_seconds)
@@ -267,7 +267,7 @@ class LiveRoomWorker:
                 progresses = await self.client.get_task_progress(task_ids)
                 if not progresses:
                     LOGGER.warning(
-                        "\u672a\u83b7\u53d6\u5230\u4efb\u52a1\u8fdb\u5ea6\uff0c\u8bf7\u68c0\u67e5\u4efb\u52a1 ID \u662f\u5426\u6b63\u786e"
+                        "未获取到任务进度，请检查任务 ID 是否正确"
                     )
                 else:
                     for task in progresses:
@@ -276,7 +276,7 @@ class LiveRoomWorker:
                         previous = last_snapshot.get(key)
                         if previous != current:
                             self._log_info(
-                                "\u4efb\u52a1\u8fdb\u5ea6: %s %s/%s",
+                                "任务进度: %s %s/%s",
                                 task.task_name,
                                 task.cur_value,
                                 task.limit_value,
@@ -290,7 +290,7 @@ class LiveRoomWorker:
                         ):
                             notified_completed_ids.add(key)
                             self._log_info(
-                                "\u4efb\u52a1\u5b8c\u6210: %s (%s/%s)",
+                                "任务完成: %s (%s/%s)",
                                 task.task_name,
                                 task.cur_value,
                                 task.limit_value,
@@ -300,23 +300,23 @@ class LiveRoomWorker:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                LOGGER.warning("\u67e5\u8be2\u4efb\u52a1\u8fdb\u5ea6\u5931\u8d25: %s", exc)
+                LOGGER.warning("查询任务进度失败: %s", exc)
                 wait_seconds = max(10, self.config.reconnect_delay_seconds)
             await asyncio.sleep(wait_seconds)
 
     def _send_task_complete_notification(self, task: TaskProgress) -> None:
         if not self.notifier.enabled:
             return
-        title = "Bilibili \u4efb\u52a1\u5b8c\u6210"
+        title = "Bilibili 任务完成"
         body = (
-            f"\u76f4\u64ad\u95f4: {self.room_id}\n"
-            f"\u4efb\u52a1: {task.task_name}\n"
-            f"\u8fdb\u5ea6: {task.cur_value}/{task.limit_value}"
+            f"直播间: {self.room_id}\n"
+            f"任务: {task.task_name}\n"
+            f"进度: {task.cur_value}/{task.limit_value}"
         )
         sent = self.notifier.notify(title=title, body=body)
         if sent:
             self._log_info(
-                "\u5df2\u53d1\u9001\u901a\u77e5: %s",
+                "已发送通知: %s",
                 task.task_name,
                 primary_only=True,
             )
@@ -325,13 +325,13 @@ class LiveRoomWorker:
         cmd = str(event.get("cmd", ""))
         if cmd.startswith("POPULARITY_RED_POCKET_START"):
             self._log_info(
-                "\u76f4\u64ad\u95f4 %s \u53d1\u73b0\u7ea2\u5305\u62bd\u5956",
+                "直播间 %s 发现红包抽奖",
                 self.room_id,
                 primary_only=True,
             )
         elif cmd.startswith("ANCHOR_LOT_START"):
             self._log_info(
-                "\u76f4\u64ad\u95f4 %s \u53d1\u73b0\u5929\u9009\u65f6\u523b",
+                "直播间 %s 发现天选时刻",
                 self.room_id,
                 primary_only=True,
             )
