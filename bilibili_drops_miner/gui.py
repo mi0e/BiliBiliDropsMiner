@@ -42,6 +42,7 @@ class MinerGUI:
         self.log_queue: "queue.Queue[str]" = queue.Queue()
         self.worker_thread: threading.Thread | None = None
         self.miner: BilibiliWatchTimeMiner | None = None
+        self._stop_signal_set = False
 
         self.cookie_var = ctk.StringVar()
         self.rooms_var = ctk.StringVar(value="6")
@@ -339,6 +340,7 @@ class MinerGUI:
         )
 
     def start(self) -> None:
+        self._stop_signal_set = False
         if self.worker_thread and self.worker_thread.is_alive():
             messagebox.showinfo(
                 "运行中",
@@ -384,9 +386,19 @@ class MinerGUI:
         self._log_expanded = not self._log_expanded
 
     def stop(self) -> None:
+        self._stop_signal_set = True
+        logger = logging.getLogger(__name__)
         if self.miner is not None:
             self.miner.stop()
-            logging.getLogger(__name__).info("正在停止...")
+            logger.info("正在停止...")
+            if self.worker_thread is not None:
+                self.worker_thread.join(timeout=5)
+                if self.worker_thread.is_alive():
+                    logger.warning("停止超时，仍有后台线程未退出")
+                else:
+                    logger.info("停止成功")
+                    self.worker_thread = None
+                    self.miner = None
         self._stop_progress_animation()
 
     def _start_progress_animation(self) -> None:
@@ -731,7 +743,7 @@ class MinerGUI:
         )
 
     def _schedule_task_refresh(self) -> None:
-        if self.worker_thread is None or not self.worker_thread.is_alive():
+        if self._stop_signal_set or self.worker_thread is None or not self.worker_thread.is_alive():
             return
         self.refresh_tasks()
         try:
@@ -794,7 +806,7 @@ class MinerGUI:
 
     def _schedule_config_sync(self) -> None:
         self._sync_config_to_miner()
-        if self.worker_thread is not None and self.worker_thread.is_alive():
+        if not self._stop_signal_set and self.worker_thread is not None and self.worker_thread.is_alive():
             self.root.after(2000, self._schedule_config_sync)
 
     def _sync_config_to_miner(self) -> None:
