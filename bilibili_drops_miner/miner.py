@@ -28,6 +28,7 @@ class BilibiliWatchTimeMiner:
         self._uname: str = ""
         self._notifier = MultiPlatformNotifier(config.notify_urls)
         self._clients: list[BilibiliClient] = []
+        self._clients_lock = threading.Lock()
 
     def _build_session_plans(self) -> list[SessionPlan]:
         plans: list[SessionPlan] = []
@@ -45,10 +46,15 @@ class BilibiliWatchTimeMiner:
 
     async def _thread_loop(self, plan: SessionPlan, thread_index: int) -> None:
         # Stagger thread startups by 3s to avoid x25Kn session collision
-        if thread_index > 1:
-            await asyncio.sleep((thread_index - 1) * 3)
+        if thread_index > 1 and await asyncio.to_thread(
+            self._stop_event.wait, (thread_index - 1) * 3
+        ):
+            return
+        if self._stop_event.is_set():
+            return
         client = BilibiliClient(self.config.cookie)
-        self._clients.append(client)
+        with self._clients_lock:
+            self._clients.append(client)
         worker: LiveRoomWorker | None = None
         task: asyncio.Task[None] | None = None
         try:
@@ -72,7 +78,8 @@ class BilibiliWatchTimeMiner:
                 plan.session_no,
             )
             while not self._stop_event.is_set():
-                await asyncio.sleep(1)
+                if await asyncio.to_thread(self._stop_event.wait, 1):
+                    break
         finally:
             if worker is not None:
                 await worker.stop()
@@ -80,6 +87,9 @@ class BilibiliWatchTimeMiner:
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
             await client.close()
+            with self._clients_lock:
+                if client in self._clients:
+                    self._clients.remove(client)
 
     def _thread_entry(self, plan: SessionPlan, thread_index: int) -> None:
         try:
@@ -138,13 +148,26 @@ class BilibiliWatchTimeMiner:
             self.stop()
             for thread in self._threads:
                 thread.join(timeout=3)
+            alive_threads = [thread.name for thread in self._threads if thread.is_alive()]
+            if alive_threads:
+                preview = ", ".join(alive_threads[:5])
+                if len(alive_threads) > 5:
+                    preview += f" ... 共 {len(alive_threads)} 个"
+                LOGGER.warning("停止未完成，仍有线程未退出: %s", preview)
+            else:
+                LOGGER.info("所有连接已停止")
+            self._threads.clear()
+            with self._clients_lock:
+                self._clients.clear()
 
     def stop(self) -> None:
         self._stop_event.set()
 
     def update_cookie(self, new_cookie: str) -> None:
         self.config.cookie = new_cookie
-        for client in self._clients:
+        with self._clients_lock:
+            clients = list(self._clients)
+        for client in clients:
             client.update_cookie(new_cookie)
 
     def update_notifier(self, notify_urls: list[str]) -> None:

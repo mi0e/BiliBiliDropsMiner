@@ -113,6 +113,7 @@ class LiveRoomWorker:
         self.session_id = session_id
         self.primary_session = primary_session
         self._stop_event = asyncio.Event()
+        self._ws: websockets.WebSocketClientProtocol | None = None
 
     @property
     def _ctx(self) -> str:
@@ -136,6 +137,9 @@ class LiveRoomWorker:
 
     async def stop(self) -> None:
         self._stop_event.set()
+        if self._ws is not None:
+            await self._ws.close()
+            self._ws = None
 
     async def run_forever(self) -> None:
         while not self._stop_event.is_set():
@@ -154,6 +158,8 @@ class LiveRoomWorker:
                 )
             if not self._stop_event.is_set():
                 await asyncio.sleep(self.config.reconnect_delay_seconds)
+                if self._stop_event.is_set():
+                    return
 
     async def _run_once(self, conf: DanmuServerConf) -> None:
         auth_payload = json.dumps(
@@ -172,6 +178,7 @@ class LiveRoomWorker:
         async with websockets.connect(
             uri, ping_interval=None, max_size=4 * 1024 * 1024
         ) as ws:
+            self._ws = ws
             self._log_info("直播间 %s 已连接", self.room_id, primary_only=True)
             await ws.send(_build_packet(auth_payload, operation=7, version=1))
 
@@ -196,7 +203,12 @@ class LiveRoomWorker:
                         if self.config.debug_events:
                             LOGGER.debug("%s event cmd=%s", self._ctx, event.get("cmd"))
                         self.on_event(event)
+            except websockets.exceptions.ConnectionClosed:
+                if self._stop_event.is_set():
+                    return
+                raise
             finally:
+                self._ws = None
                 heartbeat_task.cancel()
                 trace_heartbeat_task.cancel()
                 tasks = [heartbeat_task, trace_heartbeat_task]
@@ -214,7 +226,14 @@ class LiveRoomWorker:
                 self._ctx,
                 self.config.heartbeat_interval_seconds,
             )
-            await asyncio.sleep(self.config.heartbeat_interval_seconds)
+            try:
+                await asyncio.wait_for(
+                    self._stop_event.wait(),
+                    timeout=self.config.heartbeat_interval_seconds,
+                )
+                return
+            except asyncio.TimeoutError:
+                pass
 
     async def _trace_heartbeat_loop(self) -> None:
         session: LiveTraceSession | None = None
@@ -222,8 +241,11 @@ class LiveRoomWorker:
         while not self._stop_event.is_set():
             if not self.config.enable_web_heartbeat:
                 session = None
-                await asyncio.sleep(5)
-                continue
+                try:
+                    await asyncio.wait_for(self._stop_event.wait(), timeout=5)
+                    return
+                except asyncio.TimeoutError:
+                    continue
             try:
                 if session is None:
                     await self.client.room_entry_action(self.room_id)
@@ -252,7 +274,11 @@ class LiveRoomWorker:
                 )
                 session = None
                 wait_seconds = max(5, self.config.reconnect_delay_seconds)
-            await asyncio.sleep(wait_seconds)
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=wait_seconds)
+                return
+            except asyncio.TimeoutError:
+                pass
 
     async def _task_monitor_loop(self) -> None:
         last_snapshot: dict[str, tuple[int | float, int | float, int]] = {}
@@ -261,8 +287,11 @@ class LiveRoomWorker:
             task_ids = self.config.task_ids
             wait_seconds = max(10, self.config.task_query_interval_seconds)
             if not task_ids:
-                await asyncio.sleep(wait_seconds)
-                continue
+                try:
+                    await asyncio.wait_for(self._stop_event.wait(), timeout=wait_seconds)
+                    return
+                except asyncio.TimeoutError:
+                    continue
             try:
                 progresses = await self.client.get_task_progress(task_ids)
                 if not progresses:
@@ -302,7 +331,11 @@ class LiveRoomWorker:
             except Exception as exc:
                 LOGGER.warning("查询任务进度失败: %s", exc)
                 wait_seconds = max(10, self.config.reconnect_delay_seconds)
-            await asyncio.sleep(wait_seconds)
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=wait_seconds)
+                return
+            except asyncio.TimeoutError:
+                pass
 
     def _send_task_complete_notification(self, task: TaskProgress) -> None:
         if not self.notifier.enabled:
