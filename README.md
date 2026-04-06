@@ -1,6 +1,8 @@
 # Bilibili 直播掉宝助手
 
-[下载](https://github.com/mi0e/BiliBiliDropsMiner/releases/latest) [国内下载](https://ghfast.top/https://github.com/mi0e/BiliBiliDropsMiner/releases/latest/download/bilibili-drops-miner-gui.exe)
+[下载](https://github.com/mi0e/BiliBiliDropsMiner/releases/latest) 
+
+[国内下载 密码1234](https://wwaqd.lanzoum.com/b019vsjd5i)
 
 B 站直播掉宝 / 观看时长任务的自动挂机工具，支持多线程倍速完成任务，可用 CLI 和 GUI 两种模式。
 
