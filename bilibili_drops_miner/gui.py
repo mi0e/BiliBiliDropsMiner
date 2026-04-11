@@ -499,14 +499,6 @@ class MinerGUI:
         on_network_match=None,
         on_cookies=None,
     ) -> None:
-        """打开浏览器，可同时监听网络请求和/或获取 Cookie。
-
-        Edge（优先）: 原有扩展注入方式不变。
-        Chrome（fallback）:
-          - Cookie: CDP 读取（含 httpOnly）
-          - 网络监听: background.js 用 chrome.scripting.executeScript 注入 MAIN world
-        """
-
         def _do() -> None:
             server = None
             ext_dir = None
@@ -565,7 +557,6 @@ class MinerGUI:
                 ext_dir = tempfile.mkdtemp(prefix="bili_sniff_")
 
                 def _write_ext_edge() -> None:
-                    """Edge 原有方案：content_scripts + background service_worker"""
                     manifest: dict = {
                         "manifest_version": 3,
                         "name": "BiliSniff",
@@ -659,10 +650,7 @@ class MinerGUI:
                             f.write(content)
 
                 def _write_ext_chrome() -> None:
-                    """Chrome 方案：使用 background service worker 同時處理 network sniffing 和 cookie 抓取"""
-                    port = server.server_address[1]   # 你原本已經建立的本地 HTTP server port
-
-                    # relay.js（ISOLATED world，用來轉發 postMessage）
+                    port = server.server_address[1]
                     relay_js = (
                         "window.addEventListener('message',function(e){\n"
                         "  if(e.data && e.data.type==='__bili_sniff__'){\n"
@@ -675,17 +663,14 @@ class MinerGUI:
                         "});"
                     )
 
-                    # background.js（service worker）—— 同時處理 inject + cookie
                     background_js = (
                         "var injectedTabs = {};\n"
                         "var PORT = " + str(port) + ";\n"
 
-                        # 注入 MAIN world 的 sniff 函數（fetch / XHR 監聽）
                         "function injectTab(tabId) {\n"
                         "  if (injectedTabs[tabId]) return;\n"
                         "  injectedTabs[tabId] = true;\n"
 
-                        # 先注入 relay（ISOLATED）
                         "  chrome.scripting.executeScript({\n"
                         "    target: {tabId: tabId},\n"
                         "    world: 'ISOLATED',\n"
@@ -702,7 +687,6 @@ class MinerGUI:
                         "    }\n"
                         "  });\n"
 
-                        # 再注入 MAIN world 的 fetch/XHR 攔截
                         "  chrome.scripting.executeScript({\n"
                         "    target: {tabId: tabId},\n"
                         "    world: 'MAIN',\n"
@@ -744,19 +728,16 @@ class MinerGUI:
                         "  });\n"
                         "}\n"
 
-                        # 監聽 tab 更新，注入 sniff
                         "chrome.tabs.onUpdated.addListener(function(tabId, changeInfo, tab) {\n"
                         "  if (changeInfo.status === 'complete' && tab.url && tab.url.indexOf('bilibili.com') !== -1) {\n"
                         "    injectTab(tabId);\n"
                         "  }\n"
                         "});\n"
 
-                        # 初始注入已開啟的 bili 頁面
                         "chrome.tabs.query({url: '*://*.bilibili.com/*'}, function(tabs) {\n"
                         "  tabs.forEach(function(tab) { injectTab(tab.id); });\n"
                         "});\n"
 
-                        # ==================== 新增：Cookie 監聽與發送 ====================
                         "function sendCookies() {\n"
                         "  chrome.cookies.getAll({domain: '.bilibili.com'}, function(cookies) {\n"
                         "    if (cookies && cookies.length > 0) {\n"
@@ -769,11 +750,9 @@ class MinerGUI:
                         "  });\n"
                         "}\n"
 
-                        # 初始抓一次 + 每 3 秒抓一次（用戶登入後會立即捕捉）
                         "sendCookies();\n"
                         "setInterval(sendCookies, 3000);\n"
 
-                        # 監聽 cookie 變化（更即時）
                         "chrome.cookies.onChanged.addListener(function(changeInfo) {\n"
                         "  if (changeInfo.cookie.domain.includes('bilibili.com')) {\n"
                         "    sendCookies();\n"
@@ -781,28 +760,26 @@ class MinerGUI:
                         "});\n"
                     )
 
-                    # manifest.json
                     manifest = {
                         "manifest_version": 3,
                         "name": "BiliSniff",
                         "version": "1.0",
-                        "permissions": ["scripting", "tabs", "cookies"],   # ← 必須加上 "cookies"
+                        "permissions": ["scripting", "tabs", "cookies"],
                         "host_permissions": [
                             "http://127.0.0.1/*",
                             "*://*.bilibili.com/*"
                         ],
                         "background": {"service_worker": "background.js"},
-                        "content_scripts": []   # relay.js 可選保留做備援
+                        "content_scripts": []
                     }
 
-                    if need_net:   # 如果需要 network sniffing
+                    if need_net:
                         manifest["content_scripts"].append({
                             "matches": ["*://*.bilibili.com/*"],
                             "js": ["relay.js"],
                             "run_at": "document_start"
                         })
 
-                    # 寫入檔案
                     ext_path = os.path.join(ext_dir, "manifest.json")
                     with open(ext_path, "w", encoding="utf-8") as f:
                         json.dump(manifest, f, indent=2)
@@ -814,9 +791,6 @@ class MinerGUI:
                         with open(os.path.join(ext_dir, "relay.js"), "w", encoding="utf-8") as f:
                             f.write(relay_js)
 
-                # ---- 检测浏览器是否存在 ----
-
-                # ---- 启动浏览器（Edge 优先）----
                 last_exc = None
                 for _browser in ("edge", "chrome"):
                     if not MinerGUI._find_browser(_browser):
@@ -839,12 +813,9 @@ class MinerGUI:
                             browser_type = "chrome"
                             try:
                                 ext_result = driver.webextension.install(path=ext_dir)
-                                print(ext_dir)
-                                logging.getLogger(__name__).info("已安裝 extension，ID: %s", ext_result)
                             except Exception as e:
-                                logging.getLogger(__name__).error("安裝 extension 失敗: %s", e)
+                                logging.getLogger(__name__).error("安裝 extension 失败: %s", e)
                             
-                        logging.getLogger(__name__).info("已启动 %s", _browser)
                         break
                     except Exception as _e:
                         last_exc = _e
@@ -865,36 +836,29 @@ class MinerGUI:
                 cookie_done = False
                 net_done = False
                 last_cookie_count = 0
-                for i in range(120):   # 最長等待約 3 分鐘
-                    # ==================== Cookie 處理 ====================
+                for i in range(120): 
                     if need_cookie and not cookie_done and cookie_captured:
-                        current_cookies = cookie_captured[-1]   # 取最新一次收到的 cookie
+                        current_cookies = cookie_captured[-1]  
 
-                        # 檢查是否已經包含關鍵登入 cookie
                         has_sessdata = any(c.get("name") == "SESSDATA" for c in current_cookies)
                         has_dedeuid = any(c.get("name") == "DedeUserID" for c in current_cookies)
 
                         if has_sessdata and has_dedeuid:
-                            # 過濾出有價值的 cookie（避免重複）
                             filtered_cookies = [
                                 c for c in current_cookies 
                                 if c.get("name") in ["SESSDATA", "bili_jct", "DedeUserID", "DedeUserID__ckMd5", "buvid3", "b_nut", "sid"]
                             ]
                             on_cookies(filtered_cookies)
                             cookie_done = True
-                            logging.getLogger(__name__).info("已檢測到登入 Cookie")
+                            logging.getLogger(__name__).info("已检测到登入 Cookie")
                         else:
-                            # 還沒登入，繼續等待（但記錄次數，避免一直卡住）
                             if len(cookie_captured) > last_cookie_count:
                                 last_cookie_count = len(cookie_captured)
-                                logging.getLogger(__name__).info(f"等待用戶登入... 已收到 {len(current_cookies)} 個 cookie")
 
-                    # ==================== Network 請求處理 ====================
                     if need_net and not net_done and net_captured:
                         on_network_match(net_captured[0]["data"])
                         net_done = True
 
-                    # 如果兩件事都完成，就提前結束
                     if (not need_cookie or cookie_done) and (not need_net or net_done):
                         break
 
