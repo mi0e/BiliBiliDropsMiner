@@ -903,8 +903,7 @@ class MinerGUI:
             except ImportError as e:
                 messagebox.showerror(
                     "依赖缺失",
-                    f"缺少依赖库，请安装后重试: {e}\n\n"
-                    "Chrome 方案额外需要: pip install requests websocket-client",
+                    f"缺少依赖库，请安装后重试: {e}\n\n",
                 )
             except Exception as exc:
                 logging.getLogger(__name__).exception("自动获取失败")
