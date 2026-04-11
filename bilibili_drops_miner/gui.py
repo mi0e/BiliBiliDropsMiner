@@ -642,11 +642,27 @@ class MinerGUI:
                     with open(os.path.join(ext_dir, fname), "w", encoding="utf-8") as f:
                         f.write(content)
 
-                # ---- 启动浏览器 ----
-                options = webdriver.EdgeOptions()
-                options.add_argument(f"--load-extension={ext_dir}")
-
-                driver = webdriver.Edge(options=options)
+                # ---- 启动浏览器（Chrome → Edge 自动检测）----
+                driver = None
+                last_exc = None
+                for _browser in ("chrome", "edge"):
+                    try:
+                        if _browser == "chrome":
+                            _opts = webdriver.ChromeOptions()
+                            _opts.add_argument(f"--load-extension={ext_dir}")
+                            driver = webdriver.Chrome(options=_opts)
+                        else:
+                            _opts = webdriver.EdgeOptions()
+                            _opts.add_argument(f"--load-extension={ext_dir}")
+                            driver = webdriver.Edge(options=_opts)
+                        break
+                    except Exception as _e:
+                        last_exc = _e
+                        driver = None
+                if driver is None:
+                    raise RuntimeError(
+                        f"未找到可用浏览器（Chrome/Edge），请确认已安装并配置好 ChromeDriver 或 EdgeDriver。\n最后错误: {last_exc}"
+                    )
                 driver.get("https://www.bilibili.com/")
                 logging.getLogger(__name__).info(hint)
 
