@@ -46,7 +46,7 @@ class MinerGUI:
         self._stop_signal_set = False
 
         self.cookie_var = ctk.StringVar()
-        self.rooms_var = ctk.StringVar(value="6")
+        self.rooms_var = ctk.StringVar(value="23612045")
         self.threads_var = ctk.StringVar(value="1")
         self.heartbeat_var = ctk.StringVar(value="30")
         self.reconnect_var = ctk.StringVar(value="8")
