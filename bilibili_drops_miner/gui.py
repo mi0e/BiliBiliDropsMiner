@@ -8,6 +8,7 @@ import re
 import threading
 from pathlib import Path
 from tkinter import filedialog, messagebox
+import os
 
 import customtkinter as ctk
 
@@ -462,7 +463,6 @@ class MinerGUI:
 
         def _do() -> None:
             try:
-
                 async def _query():
                     client = BilibiliClient(cookie)
                     try:
@@ -478,6 +478,20 @@ class MinerGUI:
 
         threading.Thread(target=_do, daemon=True).start()
 
+    def _find_browser(name: str) -> bool:
+        if name == "edge":
+            paths = [
+                r"C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+                r"C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+            ]
+        else:
+            paths = [
+                r"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+                r"C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+                os.path.expandvars(r"%LOCALAPPDATA%\\Google\\Chrome\Application\\chrome.exe"),
+            ]
+        return any(os.path.exists(p) for p in paths)
+
     def _browser_sniff(
         self,
         url_keyword: str | None,
@@ -485,31 +499,28 @@ class MinerGUI:
         on_network_match=None,
         on_cookies=None,
     ) -> None:
-        """打开 Edge 浏览器，可同时监听网络请求和/或获取 Cookie。
-
-        - url_keyword + on_network_match: 拦截匹配的网络响应
-        - on_cookies: 获取 bilibili 全部 cookie（含 httpOnly）
-        """
-
         def _do() -> None:
             server = None
             ext_dir = None
             driver = None
+            browser_type = None
+            cdp_session = None
             try:
                 import json
                 import os
-                import shutil
                 import tempfile
                 import time
                 from http.server import BaseHTTPRequestHandler, HTTPServer
 
                 from selenium import webdriver
 
-                net_captured: list = []
-                cookie_captured: list = []
-                need_net = url_keyword and on_network_match
+                need_net = bool(url_keyword and on_network_match)
                 need_cookie = on_cookies is not None
 
+                net_captured: list = []
+                cookie_captured: list = []
+
+                # ---- 本地 HTTP 服务 ----
                 class _Handler(BaseHTTPRequestHandler):
                     def do_POST(self):
                         length = int(self.headers.get("Content-Length", 0))
@@ -530,7 +541,9 @@ class MinerGUI:
                         self.send_response(204)
                         self.send_header("Access-Control-Allow-Origin", "*")
                         self.send_header("Access-Control-Allow-Methods", "POST")
-                        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+                        self.send_header(
+                            "Access-Control-Allow-Headers", "Content-Type"
+                        )
                         self.end_headers()
 
                     def log_message(self, *_a):
@@ -540,71 +553,107 @@ class MinerGUI:
                 port = server.server_address[1]
                 threading.Thread(target=server.serve_forever, daemon=True).start()
 
-                # ---- 创建临时扩展 ----
+                # ---- 构建扩展 ----
                 ext_dir = tempfile.mkdtemp(prefix="bili_sniff_")
 
-                manifest: dict = {
-                    "manifest_version": 3,
-                    "name": "BiliSniff",
-                    "version": "1.0",
-                    "host_permissions": ["http://127.0.0.1/*"],
-                    "content_scripts": [],
-                }
+                def _write_ext_edge() -> None:
+                    manifest: dict = {
+                        "manifest_version": 3,
+                        "name": "BiliSniff",
+                        "version": "1.0",
+                        "host_permissions": ["http://127.0.0.1/*"],
+                        "content_scripts": [],
+                    }
+                    files: dict[str, str] = {}
 
-                files_to_write: dict[str, str] = {}
+                    if need_net:
+                        manifest["content_scripts"] += [
+                            {
+                                "matches": ["*://*.bilibili.com/*"],
+                                "js": ["inject.js"],
+                                "run_at": "document_start",
+                                "world": "MAIN",
+                            },
+                            {
+                                "matches": ["*://*.bilibili.com/*"],
+                                "js": ["relay.js"],
+                                "run_at": "document_start",
+                            },
+                        ]
+                        files["inject.js"] = (
+                            "(function(){\n"
+                            "var origFetch=window.fetch;\n"
+                            "window.fetch=async function(){\n"
+                            "  var resp=await origFetch.apply(this,arguments);\n"
+                            "  var url=(typeof arguments[0]==='string')?arguments[0]:arguments[0].url;\n"
+                            "  if(url.indexOf('" + (url_keyword or "") + "')!==-1){\n"
+                            "    try{var d=await resp.clone().json();\n"
+                            "      window.postMessage({type:'__bili_sniff__',payload:{url:url,data:d}},'*');\n"
+                            "    }catch(e){}\n"
+                            "  }\n"
+                            "  return resp;\n"
+                            "};\n"
+                            "var origOpen=XMLHttpRequest.prototype.open;\n"
+                            "var origSend=XMLHttpRequest.prototype.send;\n"
+                            "XMLHttpRequest.prototype.open=function(m,u){\n"
+                            "  this.__url=u;return origOpen.apply(this,arguments);};\n"
+                            "XMLHttpRequest.prototype.send=function(){\n"
+                            "  var self=this;\n"
+                            "  this.addEventListener('load',function(){\n"
+                            "    if(self.__url&&self.__url.indexOf('"
+                            + (url_keyword or "")
+                            + "')!==-1){\n"
+                            "      try{window.postMessage({type:'__bili_sniff__',\n"
+                            "        payload:{url:self.__url,data:JSON.parse(self.responseText)}},'*');\n"
+                            "      }catch(e){}\n"
+                            "    }\n"
+                            "  });\n"
+                            "  return origSend.apply(this,arguments);\n"
+                            "};\n"
+                            "})();"
+                        )
+                        files["relay.js"] = (
+                            "window.addEventListener('message',function(e){\n"
+                            "  if(e.data&&e.data.type==='__bili_sniff__'){\n"
+                            "    fetch('http://127.0.0.1:" + str(port) + "/',{\n"
+                            "      method:'POST',\n"
+                            "      headers:{'Content-Type':'application/json'},\n"
+                            "      body:JSON.stringify(e.data.payload)\n"
+                            "    }).catch(function(){});\n"
+                            "  }\n"
+                            "});"
+                        )
 
-                # -- 网络拦截 --
-                if need_net:
-                    manifest["content_scripts"].append(
-                        {
-                            "matches": ["*://*.bilibili.com/*"],
-                            "js": ["inject.js"],
-                            "run_at": "document_start",
-                            "world": "MAIN",
-                        }
-                    )
-                    manifest["content_scripts"].append(
-                        {
-                            "matches": ["*://*.bilibili.com/*"],
-                            "js": ["relay.js"],
-                            "run_at": "document_start",
-                        }
-                    )
-                    files_to_write["inject.js"] = (
-                        "(function(){\n"
-                        "var origFetch=window.fetch;\n"
-                        "window.fetch=async function(){\n"
-                        "  var resp=await origFetch.apply(this,arguments);\n"
-                        "  var url=(typeof arguments[0]==='string')?arguments[0]:arguments[0].url;\n"
-                        "  if(url.indexOf('" + url_keyword + "')!==-1){\n"
-                        "    try{var d=await resp.clone().json();\n"
-                        "      window.postMessage({type:'__bili_sniff__',payload:{url:url,data:d}},'*');\n"
-                        "    }catch(e){}\n"
-                        "  }\n"
-                        "  return resp;\n"
-                        "};\n"
-                        "var origOpen=XMLHttpRequest.prototype.open;\n"
-                        "var origSend=XMLHttpRequest.prototype.send;\n"
-                        "XMLHttpRequest.prototype.open=function(m,u){\n"
-                        "  this.__url=u;return origOpen.apply(this,arguments);};\n"
-                        "XMLHttpRequest.prototype.send=function(){\n"
-                        "  var self=this;\n"
-                        "  this.addEventListener('load',function(){\n"
-                        "    if(self.__url&&self.__url.indexOf('"
-                        + url_keyword
-                        + "')!==-1){\n"
-                        "      try{window.postMessage({type:'__bili_sniff__',\n"
-                        "        payload:{url:self.__url,data:JSON.parse(self.responseText)}},'*');\n"
-                        "      }catch(e){}\n"
-                        "    }\n"
-                        "  });\n"
-                        "  return origSend.apply(this,arguments);\n"
-                        "};\n"
-                        "})();"
-                    )
-                    files_to_write["relay.js"] = (
+                    if need_cookie:
+                        manifest["permissions"] = ["cookies"]
+                        manifest["host_permissions"].append("*://*.bilibili.com/*")
+                        manifest["background"] = {"service_worker": "background.js"}
+                        files["background.js"] = (
+                            "function checkCookies(){\n"
+                            "  chrome.cookies.getAll({domain:'.bilibili.com'},function(cookies){\n"
+                            "    if(!cookies.some(function(c){return c.name==='SESSDATA';}))return;\n"
+                            "    fetch('http://127.0.0.1:" + str(port) + "/',{\n"
+                            "      method:'POST',\n"
+                            "      headers:{'Content-Type':'application/json'},\n"
+                            "      body:JSON.stringify({type:'__bili_cookies__',cookies:cookies})\n"
+                            "    }).catch(function(){});\n"
+                            "  });\n"
+                            "}\n"
+                            "checkCookies();\n"
+                            "setInterval(checkCookies,3000);"
+                        )
+
+                    with open(os.path.join(ext_dir, "manifest.json"), "w", encoding="utf-8") as f:
+                        json.dump(manifest, f)
+                    for fname, content in files.items():
+                        with open(os.path.join(ext_dir, fname), "w", encoding="utf-8") as f:
+                            f.write(content)
+
+                def _write_ext_chrome() -> None:
+                    port = server.server_address[1]
+                    relay_js = (
                         "window.addEventListener('message',function(e){\n"
-                        "  if(e.data&&e.data.type==='__bili_sniff__'){\n"
+                        "  if(e.data && e.data.type==='__bili_sniff__'){\n"
                         "    fetch('http://127.0.0.1:" + str(port) + "/',{\n"
                         "      method:'POST',\n"
                         "      headers:{'Content-Type':'application/json'},\n"
@@ -614,64 +663,221 @@ class MinerGUI:
                         "});"
                     )
 
-                # -- Cookie 获取 --
-                if need_cookie:
-                    manifest["permissions"] = ["cookies"]
-                    manifest["host_permissions"].append("*://*.bilibili.com/*")
-                    manifest["background"] = {"service_worker": "background.js"}
-                    files_to_write["background.js"] = (
-                        "function checkCookies(){\n"
-                        "  chrome.cookies.getAll({domain:'.bilibili.com'},function(cookies){\n"
-                        "    if(!cookies.some(function(c){return c.name==='SESSDATA';}))return;\n"
-                        "    fetch('http://127.0.0.1:" + str(port) + "/',{\n"
-                        "      method:'POST',\n"
-                        "      headers:{'Content-Type':'application/json'},\n"
-                        "      body:JSON.stringify({type:'__bili_cookies__',cookies:cookies})\n"
-                        "    }).catch(function(){});\n"
+                    background_js = (
+                        "var injectedTabs = {};\n"
+                        "var PORT = " + str(port) + ";\n"
+
+                        "function injectTab(tabId) {\n"
+                        "  if (injectedTabs[tabId]) return;\n"
+                        "  injectedTabs[tabId] = true;\n"
+
+                        "  chrome.scripting.executeScript({\n"
+                        "    target: {tabId: tabId},\n"
+                        "    world: 'ISOLATED',\n"
+                        "    func: function() {\n"
+                        "      window.addEventListener('message', function(e) {\n"
+                        "        if (e.data && e.data.type === '__bili_sniff__') {\n"
+                        "          fetch('http://127.0.0.1:" + str(port) + "/', {\n"
+                        "            method: 'POST',\n"
+                        "            headers: {'Content-Type': 'application/json'},\n"
+                        "            body: JSON.stringify(e.data.payload)\n"
+                        "          }).catch(function(){});\n"
+                        "        }\n"
+                        "      });\n"
+                        "    }\n"
+                        "  });\n"
+
+                        "  chrome.scripting.executeScript({\n"
+                        "    target: {tabId: tabId},\n"
+                        "    world: 'MAIN',\n"
+                        "    func: function() {\n"
+                        "      if (window.__bili_sniff_injected__) return;\n"
+                        "      window.__bili_sniff_injected__ = true;\n"
+                        "      var kw = '" + (url_keyword or "") + "';\n"
+                        "      // fetch 攔截（同你原本的邏輯）\n"
+                        "      var origFetch = window.fetch;\n"
+                        "      window.fetch = async function() {\n"
+                        "        var resp = await origFetch.apply(this, arguments);\n"
+                        "        var url = (typeof arguments[0] === 'string') ? arguments[0] : arguments[0].url;\n"
+                        "        if (url.indexOf(kw) !== -1) {\n"
+                        "          try {\n"
+                        "            var d = await resp.clone().json();\n"
+                        "            window.postMessage({type: '__bili_sniff__', payload: {url: url, data: d}}, '*');\n"
+                        "          } catch(e) {}\n"
+                        "        }\n"
+                        "        return resp;\n"
+                        "      };\n"
+                        "      // XHR 攔截（保持你原本邏輯）\n"
+                        "      var origOpen = XMLHttpRequest.prototype.open;\n"
+                        "      var origSend = XMLHttpRequest.prototype.send;\n"
+                        "      XMLHttpRequest.prototype.open = function(m, u) {\n"
+                        "        this.__url = u; return origOpen.apply(this, arguments);\n"
+                        "      };\n"
+                        "      XMLHttpRequest.prototype.send = function() {\n"
+                        "        var self = this;\n"
+                        "        this.addEventListener('load', function() {\n"
+                        "          if (self.__url && self.__url.indexOf(kw) !== -1) {\n"
+                        "            try {\n"
+                        "              window.postMessage({type: '__bili_sniff__', payload: {url: self.__url, data: JSON.parse(self.responseText)}}, '*');\n"
+                        "            } catch(e) {}\n"
+                        "          }\n"
+                        "        });\n"
+                        "        return origSend.apply(this, arguments);\n"
+                        "      };\n"
+                        "    }\n"
                         "  });\n"
                         "}\n"
-                        "checkCookies();\n"
-                        "setInterval(checkCookies,3000);"
+
+                        "chrome.tabs.onUpdated.addListener(function(tabId, changeInfo, tab) {\n"
+                        "  if (changeInfo.status === 'complete' && tab.url && tab.url.indexOf('bilibili.com') !== -1) {\n"
+                        "    injectTab(tabId);\n"
+                        "  }\n"
+                        "});\n"
+
+                        "chrome.tabs.query({url: '*://*.bilibili.com/*'}, function(tabs) {\n"
+                        "  tabs.forEach(function(tab) { injectTab(tab.id); });\n"
+                        "});\n"
+
+                        "function sendCookies() {\n"
+                        "  chrome.cookies.getAll({domain: '.bilibili.com'}, function(cookies) {\n"
+                        "    if (cookies && cookies.length > 0) {\n"
+                        "      fetch('http://127.0.0.1:' + PORT + '/', {\n"
+                        "        method: 'POST',\n"
+                        "        headers: {'Content-Type': 'application/json'},\n"
+                        "        body: JSON.stringify({type: '__bili_cookies__', cookies: cookies})\n"
+                        "      }).catch(function(){});\n"
+                        "    }\n"
+                        "  });\n"
+                        "}\n"
+
+                        "sendCookies();\n"
+                        "setInterval(sendCookies, 3000);\n"
+
+                        "chrome.cookies.onChanged.addListener(function(changeInfo) {\n"
+                        "  if (changeInfo.cookie.domain.includes('bilibili.com')) {\n"
+                        "    sendCookies();\n"
+                        "  }\n"
+                        "});\n"
                     )
 
-                with open(
-                    os.path.join(ext_dir, "manifest.json"), "w", encoding="utf-8"
-                ) as f:
-                    json.dump(manifest, f)
-                for fname, content in files_to_write.items():
-                    with open(os.path.join(ext_dir, fname), "w", encoding="utf-8") as f:
-                        f.write(content)
+                    manifest = {
+                        "manifest_version": 3,
+                        "name": "BiliSniff",
+                        "version": "1.0",
+                        "permissions": ["scripting", "tabs", "cookies"],
+                        "host_permissions": [
+                            "http://127.0.0.1/*",
+                            "*://*.bilibili.com/*"
+                        ],
+                        "background": {"service_worker": "background.js"},
+                        "content_scripts": []
+                    }
 
-                # ---- 启动浏览器 ----
-                options = webdriver.EdgeOptions()
-                options.add_argument(f"--load-extension={ext_dir}")
+                    if need_net:
+                        manifest["content_scripts"].append({
+                            "matches": ["*://*.bilibili.com/*"],
+                            "js": ["relay.js"],
+                            "run_at": "document_start"
+                        })
 
-                driver = webdriver.Edge(options=options)
+                    ext_path = os.path.join(ext_dir, "manifest.json")
+                    with open(ext_path, "w", encoding="utf-8") as f:
+                        json.dump(manifest, f, indent=2)
+
+                    with open(os.path.join(ext_dir, "background.js"), "w", encoding="utf-8") as f:
+                        f.write(background_js)
+
+                    if need_net:
+                        with open(os.path.join(ext_dir, "relay.js"), "w", encoding="utf-8") as f:
+                            f.write(relay_js)
+
+                last_exc = None
+                for _browser in ("edge", "chrome"):
+                    if not MinerGUI._find_browser(_browser):
+                        logging.getLogger(__name__).info("未检测到 %s，跳过", _browser)
+                        continue
+                    try:
+                        if _browser == "edge":
+                            _write_ext_edge()
+                            _opts = webdriver.EdgeOptions()
+                            _opts.add_argument(f"--load-extension={ext_dir}")
+                            driver = webdriver.Edge(options=_opts)
+                            browser_type = "edge"
+                        else:
+                            _write_ext_chrome()
+                            _opts = webdriver.ChromeOptions()
+                            _opts.enable_bidi = True
+                            _opts.enable_webextensions = True
+                            _opts.add_argument("--remote-allow-origins=*")
+                            driver = webdriver.Chrome(options=_opts)
+                            browser_type = "chrome"
+                            try:
+                                ext_result = driver.webextension.install(path=ext_dir)
+                            except Exception as e:
+                                logging.getLogger(__name__).error("安裝 extension 失败: %s", e)
+                            
+                        break
+                    except Exception as _e:
+                        last_exc = _e
+                        driver = None
+                        browser_type = None
+                        logging.getLogger(__name__).warning("浏览器 %s 启动失败: %s", _browser, _e)
+
+                if driver is None:
+                    raise RuntimeError(
+                        f"未找到可用浏览器（Edge/Chrome），请确认已安装并配置好 WebDriver。\n最后错误: {last_exc}"
+                    )
+
                 driver.get("https://www.bilibili.com/")
                 logging.getLogger(__name__).info(hint)
 
+
+                # ---- 主等待循环 ----
                 cookie_done = False
                 net_done = False
-                for _ in range(120):
+                last_cookie_count = 0
+                for i in range(120): 
                     if need_cookie and not cookie_done and cookie_captured:
-                        on_cookies(cookie_captured[0])
-                        cookie_done = True
+                        current_cookies = cookie_captured[-1]  
+
+                        has_sessdata = any(c.get("name") == "SESSDATA" for c in current_cookies)
+                        has_dedeuid = any(c.get("name") == "DedeUserID" for c in current_cookies)
+
+                        if has_sessdata and has_dedeuid:
+                            filtered_cookies = [
+                                c for c in current_cookies 
+                                if c.get("name") in ["SESSDATA", "bili_jct", "DedeUserID", "DedeUserID__ckMd5", "buvid3", "b_nut", "sid"]
+                            ]
+                            on_cookies(filtered_cookies)
+                            cookie_done = True
+                            logging.getLogger(__name__).info("已检测到登入 Cookie")
+                        else:
+                            if len(cookie_captured) > last_cookie_count:
+                                last_cookie_count = len(cookie_captured)
+
                     if need_net and not net_done and net_captured:
                         on_network_match(net_captured[0]["data"])
                         net_done = True
-                    # 全部完成或只需要其中一个且已完成
+
                     if (not need_cookie or cookie_done) and (not need_net or net_done):
                         break
+
                     time.sleep(1)
-            except ImportError:
+
+            except ImportError as e:
                 messagebox.showerror(
                     "依赖缺失",
-                    "Selenium 未安装，无法使用自动获取功能。",
+                    f"缺少依赖库，请安装后重试: {e}\n\n",
                 )
             except Exception as exc:
                 logging.getLogger(__name__).exception("自动获取失败")
                 messagebox.showerror("错误", f"自动获取失败: {exc}")
             finally:
+                if cdp_session:
+                    try:
+                        cdp_session.close()
+                    except Exception:
+                        pass
                 if driver:
                     try:
                         driver.quit()
@@ -684,10 +890,10 @@ class MinerGUI:
                         pass
                 if ext_dir:
                     import shutil
-
                     shutil.rmtree(ext_dir, ignore_errors=True)
 
         threading.Thread(target=_do, daemon=True).start()
+
 
     def auto_fetch_task_ids(self) -> None:
         ok = messagebox.askokcancel(
