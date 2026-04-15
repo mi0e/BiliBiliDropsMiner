@@ -46,9 +46,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--no-color", action="store_true", help="Disable color logs")
     parser.add_argument(
-        "--debug-events", action="store_true", help="Print live event cmd values"
-    )
-    parser.add_argument(
         "-v", "--verbose", action="store_true", help="Enable debug logs"
     )
     return parser
@@ -86,7 +83,6 @@ def main(argv: list[str] | None = None) -> int:
             heartbeat_interval_seconds=args.heartbeat_interval,
             reconnect_delay_seconds=args.reconnect_delay,
             enable_web_heartbeat=not args.disable_web_heartbeat,
-            debug_events=args.debug_events,
             task_ids=task_ids,
             task_query_interval_seconds=args.task_interval,
             notify_urls=notify_urls,

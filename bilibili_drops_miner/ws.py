@@ -4,7 +4,6 @@ import asyncio
 import json
 import logging
 import struct
-import zlib
 from typing import Any
 
 import websockets
@@ -18,12 +17,6 @@ from bilibili_drops_miner.client import (
 from bilibili_drops_miner.config import MinerConfig
 from bilibili_drops_miner.notifier import MultiPlatformNotifier
 
-try:
-    import brotli  # type: ignore
-except Exception:
-    brotli = None
-
-
 LOGGER = logging.getLogger(__name__)
 HEADER = struct.Struct(">IHHII")
 
@@ -33,65 +26,6 @@ def _build_packet(
 ) -> bytes:
     packet_len = 16 + len(payload)
     return HEADER.pack(packet_len, 16, version, operation, sequence) + payload
-
-
-def _read_packets(raw: bytes) -> list[tuple[int, int, int, bytes]]:
-    packets: list[tuple[int, int, int, bytes]] = []
-    offset = 0
-    while offset + 16 <= len(raw):
-        packet_len, header_len, version, operation, sequence = HEADER.unpack_from(
-            raw, offset
-        )
-        if packet_len < header_len or packet_len <= 0:
-            break
-        body_start = offset + header_len
-        body_end = offset + packet_len
-        if body_end > len(raw):
-            break
-        packets.append((version, operation, sequence, raw[body_start:body_end]))
-        offset += packet_len
-    return packets
-
-
-def _parse_text_events(text: str) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
-    for chunk in text.split("\x00"):
-        candidate = chunk.strip()
-        if not candidate:
-            continue
-        start = candidate.find("{")
-        end = candidate.rfind("}")
-        if start == -1 or end == -1:
-            continue
-        payload = candidate[start : end + 1]
-        try:
-            events.append(json.loads(payload))
-        except json.JSONDecodeError:
-            continue
-    return events
-
-
-def decode_message(message: bytes) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
-    for version, operation, _sequence, body in _read_packets(message):
-        if operation != 5:
-            continue
-        if version in (0, 1):
-            events.extend(_parse_text_events(body.decode("utf-8", errors="ignore")))
-            continue
-        if version == 2:
-            try:
-                events.extend(decode_message(zlib.decompress(body)))
-            except zlib.error:
-                LOGGER.debug("zlib decompress failed", exc_info=True)
-            continue
-        if version == 3 and brotli is not None:
-            try:
-                events.extend(decode_message(brotli.decompress(body)))
-            except Exception:
-                LOGGER.debug("brotli decompress failed", exc_info=True)
-            continue
-    return events
 
 
 class LiveRoomWorker:
@@ -113,7 +47,7 @@ class LiveRoomWorker:
         self.session_id = session_id
         self.primary_session = primary_session
         self._stop_event = asyncio.Event()
-        self._ws: websockets.WebSocketClientProtocol | None = None
+        self._ws: Any | None = None
 
     @property
     def _ctx(self) -> str:
@@ -191,18 +125,11 @@ class LiveRoomWorker:
             )
 
             try:
-                async for message in ws:
+                # 只消费服务器推送的消息以维持 TCP 接收缓冲区正常，不做任何解析。
+                # 掉宝依赖 WS 心跳（operation=2）+ x25Kn HTTP 心跳，无需处理弹幕/礼物等事件。
+                async for _ in ws:
                     if self._stop_event.is_set():
                         return
-                    if not isinstance(message, bytes):
-                        continue
-                    events = decode_message(message)
-                    if not events:
-                        continue
-                    for event in events:
-                        if self.config.debug_events:
-                            LOGGER.debug("%s event cmd=%s", self._ctx, event.get("cmd"))
-                        self.on_event(event)
             except websockets.exceptions.ConnectionClosed:
                 if self._stop_event.is_set():
                     return
@@ -270,7 +197,10 @@ class LiveRoomWorker:
                 raise
             except Exception as exc:
                 self._log_warning(
-                    "直播间 %s 观看时长上报失败: %s", self.room_id, exc, primary_only=True
+                    "直播间 %s 观看时长上报失败: %s",
+                    self.room_id,
+                    exc,
+                    primary_only=True,
                 )
                 session = None
                 wait_seconds = max(5, self.config.reconnect_delay_seconds)
@@ -288,16 +218,16 @@ class LiveRoomWorker:
             wait_seconds = max(10, self.config.task_query_interval_seconds)
             if not task_ids:
                 try:
-                    await asyncio.wait_for(self._stop_event.wait(), timeout=wait_seconds)
+                    await asyncio.wait_for(
+                        self._stop_event.wait(), timeout=wait_seconds
+                    )
                     return
                 except asyncio.TimeoutError:
                     continue
             try:
                 progresses = await self.client.get_task_progress(task_ids)
                 if not progresses:
-                    LOGGER.warning(
-                        "未获取到任务进度，请检查任务 ID 是否正确"
-                    )
+                    LOGGER.warning("未获取到任务进度，请检查任务 ID 是否正确")
                 else:
                     for task in progresses:
                         key = task.task_id
@@ -351,20 +281,5 @@ class LiveRoomWorker:
             self._log_info(
                 "已发送通知: %s",
                 task.task_name,
-                primary_only=True,
-            )
-
-    def on_event(self, event: dict[str, Any]) -> None:
-        cmd = str(event.get("cmd", ""))
-        if cmd.startswith("POPULARITY_RED_POCKET_START"):
-            self._log_info(
-                "直播间 %s 发现红包抽奖",
-                self.room_id,
-                primary_only=True,
-            )
-        elif cmd.startswith("ANCHOR_LOT_START"):
-            self._log_info(
-                "直播间 %s 发现天选时刻",
-                self.room_id,
                 primary_only=True,
             )

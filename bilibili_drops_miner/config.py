@@ -11,7 +11,6 @@ class MinerConfig:
     heartbeat_interval_seconds: int = 30
     reconnect_delay_seconds: int = 8
     enable_web_heartbeat: bool = True
-    debug_events: bool = False
     task_ids: list[str] = field(default_factory=list)
     task_query_interval_seconds: int = 30
     notify_urls: list[str] = field(default_factory=list)

@@ -3,12 +3,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import queue
 import re
 import threading
 from pathlib import Path
 from tkinter import filedialog, messagebox
-import os
 
 import customtkinter as ctk
 
@@ -331,7 +331,6 @@ class MinerGUI:
             heartbeat_interval_seconds=int(self.heartbeat_var.get().strip() or "30"),
             reconnect_delay_seconds=int(self.reconnect_var.get().strip() or "8"),
             enable_web_heartbeat=not self.disable_web_heartbeat_var.get(),
-            debug_events=False,
             task_ids=parse_task_ids(self.task_ids_var.get().strip()),
             task_query_interval_seconds=int(
                 self.task_interval_var.get().strip() or "30"
@@ -463,6 +462,7 @@ class MinerGUI:
 
         def _do() -> None:
             try:
+
                 async def _query():
                     client = BilibiliClient(cookie)
                     try:
@@ -488,7 +488,9 @@ class MinerGUI:
             paths = [
                 r"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
                 r"C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-                os.path.expandvars(r"%LOCALAPPDATA%\\Google\\Chrome\Application\\chrome.exe"),
+                os.path.expandvars(
+                    r"%LOCALAPPDATA%\\Google\\Chrome\Application\\chrome.exe"
+                ),
             ]
         return any(os.path.exists(p) for p in paths)
 
@@ -541,9 +543,7 @@ class MinerGUI:
                         self.send_response(204)
                         self.send_header("Access-Control-Allow-Origin", "*")
                         self.send_header("Access-Control-Allow-Methods", "POST")
-                        self.send_header(
-                            "Access-Control-Allow-Headers", "Content-Type"
-                        )
+                        self.send_header("Access-Control-Allow-Headers", "Content-Type")
                         self.end_headers()
 
                     def log_message(self, *_a):
@@ -643,10 +643,14 @@ class MinerGUI:
                             "setInterval(checkCookies,3000);"
                         )
 
-                    with open(os.path.join(ext_dir, "manifest.json"), "w", encoding="utf-8") as f:
+                    with open(
+                        os.path.join(ext_dir, "manifest.json"), "w", encoding="utf-8"
+                    ) as f:
                         json.dump(manifest, f)
                     for fname, content in files.items():
-                        with open(os.path.join(ext_dir, fname), "w", encoding="utf-8") as f:
+                        with open(
+                            os.path.join(ext_dir, fname), "w", encoding="utf-8"
+                        ) as f:
                             f.write(content)
 
                 def _write_ext_chrome() -> None:
@@ -666,11 +670,9 @@ class MinerGUI:
                     background_js = (
                         "var injectedTabs = {};\n"
                         "var PORT = " + str(port) + ";\n"
-
                         "function injectTab(tabId) {\n"
                         "  if (injectedTabs[tabId]) return;\n"
                         "  injectedTabs[tabId] = true;\n"
-
                         "  chrome.scripting.executeScript({\n"
                         "    target: {tabId: tabId},\n"
                         "    world: 'ISOLATED',\n"
@@ -686,7 +688,6 @@ class MinerGUI:
                         "      });\n"
                         "    }\n"
                         "  });\n"
-
                         "  chrome.scripting.executeScript({\n"
                         "    target: {tabId: tabId},\n"
                         "    world: 'MAIN',\n"
@@ -727,17 +728,14 @@ class MinerGUI:
                         "    }\n"
                         "  });\n"
                         "}\n"
-
                         "chrome.tabs.onUpdated.addListener(function(tabId, changeInfo, tab) {\n"
                         "  if (changeInfo.status === 'complete' && tab.url && tab.url.indexOf('bilibili.com') !== -1) {\n"
                         "    injectTab(tabId);\n"
                         "  }\n"
                         "});\n"
-
                         "chrome.tabs.query({url: '*://*.bilibili.com/*'}, function(tabs) {\n"
                         "  tabs.forEach(function(tab) { injectTab(tab.id); });\n"
                         "});\n"
-
                         "function sendCookies() {\n"
                         "  chrome.cookies.getAll({domain: '.bilibili.com'}, function(cookies) {\n"
                         "    if (cookies && cookies.length > 0) {\n"
@@ -749,10 +747,8 @@ class MinerGUI:
                         "    }\n"
                         "  });\n"
                         "}\n"
-
                         "sendCookies();\n"
                         "setInterval(sendCookies, 3000);\n"
-
                         "chrome.cookies.onChanged.addListener(function(changeInfo) {\n"
                         "  if (changeInfo.cookie.domain.includes('bilibili.com')) {\n"
                         "    sendCookies();\n"
@@ -767,28 +763,34 @@ class MinerGUI:
                         "permissions": ["scripting", "tabs", "cookies"],
                         "host_permissions": [
                             "http://127.0.0.1/*",
-                            "*://*.bilibili.com/*"
+                            "*://*.bilibili.com/*",
                         ],
                         "background": {"service_worker": "background.js"},
-                        "content_scripts": []
+                        "content_scripts": [],
                     }
 
                     if need_net:
-                        manifest["content_scripts"].append({
-                            "matches": ["*://*.bilibili.com/*"],
-                            "js": ["relay.js"],
-                            "run_at": "document_start"
-                        })
+                        manifest["content_scripts"].append(
+                            {
+                                "matches": ["*://*.bilibili.com/*"],
+                                "js": ["relay.js"],
+                                "run_at": "document_start",
+                            }
+                        )
 
                     ext_path = os.path.join(ext_dir, "manifest.json")
                     with open(ext_path, "w", encoding="utf-8") as f:
                         json.dump(manifest, f, indent=2)
 
-                    with open(os.path.join(ext_dir, "background.js"), "w", encoding="utf-8") as f:
+                    with open(
+                        os.path.join(ext_dir, "background.js"), "w", encoding="utf-8"
+                    ) as f:
                         f.write(background_js)
 
                     if need_net:
-                        with open(os.path.join(ext_dir, "relay.js"), "w", encoding="utf-8") as f:
+                        with open(
+                            os.path.join(ext_dir, "relay.js"), "w", encoding="utf-8"
+                        ) as f:
                             f.write(relay_js)
 
                 last_exc = None
@@ -814,14 +816,18 @@ class MinerGUI:
                             try:
                                 ext_result = driver.webextension.install(path=ext_dir)
                             except Exception as e:
-                                logging.getLogger(__name__).error("安裝 extension 失败: %s", e)
-                            
+                                logging.getLogger(__name__).error(
+                                    "安裝 extension 失败: %s", e
+                                )
+
                         break
                     except Exception as _e:
                         last_exc = _e
                         driver = None
                         browser_type = None
-                        logging.getLogger(__name__).warning("浏览器 %s 启动失败: %s", _browser, _e)
+                        logging.getLogger(__name__).warning(
+                            "浏览器 %s 启动失败: %s", _browser, _e
+                        )
 
                 if driver is None:
                     raise RuntimeError(
@@ -831,22 +837,35 @@ class MinerGUI:
                 driver.get("https://www.bilibili.com/")
                 logging.getLogger(__name__).info(hint)
 
-
                 # ---- 主等待循环 ----
                 cookie_done = False
                 net_done = False
                 last_cookie_count = 0
-                for i in range(120): 
+                for i in range(120):
                     if need_cookie and not cookie_done and cookie_captured:
-                        current_cookies = cookie_captured[-1]  
+                        current_cookies = cookie_captured[-1]
 
-                        has_sessdata = any(c.get("name") == "SESSDATA" for c in current_cookies)
-                        has_dedeuid = any(c.get("name") == "DedeUserID" for c in current_cookies)
+                        has_sessdata = any(
+                            c.get("name") == "SESSDATA" for c in current_cookies
+                        )
+                        has_dedeuid = any(
+                            c.get("name") == "DedeUserID" for c in current_cookies
+                        )
 
                         if has_sessdata and has_dedeuid:
                             filtered_cookies = [
-                                c for c in current_cookies 
-                                if c.get("name") in ["SESSDATA", "bili_jct", "DedeUserID", "DedeUserID__ckMd5", "buvid3", "b_nut", "sid"]
+                                c
+                                for c in current_cookies
+                                if c.get("name")
+                                in [
+                                    "SESSDATA",
+                                    "bili_jct",
+                                    "DedeUserID",
+                                    "DedeUserID__ckMd5",
+                                    "buvid3",
+                                    "b_nut",
+                                    "sid",
+                                ]
                             ]
                             on_cookies(filtered_cookies)
                             cookie_done = True
@@ -890,10 +909,10 @@ class MinerGUI:
                         pass
                 if ext_dir:
                     import shutil
+
                     shutil.rmtree(ext_dir, ignore_errors=True)
 
         threading.Thread(target=_do, daemon=True).start()
-
 
     def auto_fetch_task_ids(self) -> None:
         ok = messagebox.askokcancel(
@@ -949,7 +968,11 @@ class MinerGUI:
         )
 
     def _schedule_task_refresh(self) -> None:
-        if self._stop_signal_set or self.worker_thread is None or not self.worker_thread.is_alive():
+        if (
+            self._stop_signal_set
+            or self.worker_thread is None
+            or not self.worker_thread.is_alive()
+        ):
             return
         self.refresh_tasks()
         try:
@@ -1012,7 +1035,11 @@ class MinerGUI:
 
     def _schedule_config_sync(self) -> None:
         self._sync_config_to_miner()
-        if not self._stop_signal_set and self.worker_thread is not None and self.worker_thread.is_alive():
+        if (
+            not self._stop_signal_set
+            and self.worker_thread is not None
+            and self.worker_thread.is_alive()
+        ):
             self.root.after(2000, self._schedule_config_sync)
 
     def _sync_config_to_miner(self) -> None:
@@ -1043,7 +1070,7 @@ class MinerGUI:
         config.notify_on_task_complete = not self.disable_task_notify_var.get()
 
         verbose = self.verbose_var.get()
-        config.debug_events = verbose
+
         if verbose != self._last_verbose:
             self._last_verbose = verbose
             self._install_logging()
