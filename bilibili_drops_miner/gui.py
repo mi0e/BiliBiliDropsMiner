@@ -7,6 +7,7 @@ import os
 import queue
 import re
 import threading
+import time
 from pathlib import Path
 from tkinter import filedialog, messagebox
 
@@ -60,6 +61,13 @@ class MinerGUI:
         self._last_verbose: bool | None = None
         self._task_progress_result: str = ""
         self._task_progress_pending: bool = False
+        self._task_refresh_lock = threading.Lock()
+        self._task_refresh_inflight: bool = False
+        self._task_refresh_queued: bool = False
+        self._task_refresh_trigger_pending: bool = False
+        self._stopping_in_progress: bool = False
+        self._stop_poll_started_at: float | None = None
+        self._stop_timeout_warned: bool = False
 
         self._build_layout()
         self._install_logging()
@@ -322,6 +330,9 @@ class MinerGUI:
             self._task_progress_pending = False
             self.task_text.delete("1.0", "end")
             self.task_text.insert("1.0", self._task_progress_result)
+        if self._task_refresh_trigger_pending:
+            self._task_refresh_trigger_pending = False
+            self.refresh_tasks(manual=False)
 
     def _build_config(self) -> MinerConfig:
         return MinerConfig(
@@ -341,6 +352,9 @@ class MinerGUI:
 
     def start(self) -> None:
         self._stop_signal_set = False
+        self._stopping_in_progress = False
+        self._stop_poll_started_at = None
+        self._stop_timeout_warned = False
         if self.worker_thread and self.worker_thread.is_alive():
             messagebox.showinfo(
                 "运行中",
@@ -388,18 +402,49 @@ class MinerGUI:
     def stop(self) -> None:
         self._stop_signal_set = True
         logger = logging.getLogger(__name__)
+        self._stop_progress_animation()
+        if self.worker_thread is None or not self.worker_thread.is_alive():
+            self.worker_thread = None
+            self.miner = None
+            self._stopping_in_progress = False
+            self._stop_poll_started_at = None
+            self._stop_timeout_warned = False
+            return
+        if self._stopping_in_progress:
+            logger.info("正在停止，请稍候...")
+            return
+        self._stopping_in_progress = True
+        self._stop_poll_started_at = time.monotonic()
+        self._stop_timeout_warned = False
         if self.miner is not None:
             self.miner.stop()
-            logger.info("正在停止...")
-            if self.worker_thread is not None:
-                self.worker_thread.join(timeout=5)
-                if self.worker_thread.is_alive():
-                    logger.warning("停止超时，仍有后台线程未退出")
-                else:
-                    logger.info("停止成功")
-                    self.worker_thread = None
-                    self.miner = None
-        self._stop_progress_animation()
+        logger.info("正在停止...")
+        self._poll_worker_shutdown()
+
+    def _poll_worker_shutdown(self) -> None:
+        logger = logging.getLogger(__name__)
+        if self.worker_thread is None:
+            self.miner = None
+            self._stopping_in_progress = False
+            self._stop_poll_started_at = None
+            self._stop_timeout_warned = False
+            return
+        if self.worker_thread.is_alive():
+            if self._stop_poll_started_at is None:
+                self._stop_poll_started_at = time.monotonic()
+            elapsed = time.monotonic() - self._stop_poll_started_at
+            if elapsed >= 5 and not self._stop_timeout_warned:
+                logger.warning("停止超过 5 秒，后台线程仍在退出中")
+                self._stop_timeout_warned = True
+            self.root.after(120, self._poll_worker_shutdown)
+            return
+
+        logger.info("停止成功")
+        self.worker_thread = None
+        self.miner = None
+        self._stopping_in_progress = False
+        self._stop_poll_started_at = None
+        self._stop_timeout_warned = False
 
     def _start_progress_animation(self) -> None:
         self._progress_running = True
@@ -449,10 +494,11 @@ class MinerGUI:
     def clear_logs(self) -> None:
         self.log_text.delete("1.0", "end")
 
-    def refresh_tasks(self) -> None:
+    def refresh_tasks(self, *, manual: bool = True) -> None:
         cookie = self.cookie_var.get().strip()
         if not cookie:
-            messagebox.showwarning("提示", "请先填写 Cookie")
+            if manual:
+                messagebox.showwarning("提示", "请先填写 Cookie")
             return
         task_ids = parse_task_ids(self.task_ids_var.get().strip())
         if not task_ids:
@@ -460,7 +506,20 @@ class MinerGUI:
             self._task_progress_result = "无任务数据（未填写任务 ID）"
             return
 
+        with self._task_refresh_lock:
+            if self._task_refresh_inflight:
+                self._task_refresh_queued = True
+                if manual:
+                    self._task_progress_result = "已有刷新进行中，已排队下一次刷新..."
+                    self._task_progress_pending = True
+                return
+            self._task_refresh_inflight = True
+
+        self._task_progress_result = "正在刷新任务进度..."
+        self._task_progress_pending = True
+
         def _do() -> None:
+            result_text = ""
             try:
 
                 async def _query():
@@ -471,12 +530,24 @@ class MinerGUI:
                         await client.close()
 
                 progresses = asyncio.run(_query())
-                self._task_progress_result = self._format_task_progress(progresses)
-                self._task_progress_pending = True
+                result_text = self._format_task_progress(progresses)
             except Exception as exc:
                 logging.getLogger(__name__).warning("刷新任务失败: %s", exc)
+                result_text = f"刷新任务失败: {exc}"
+            finally:
+                rerun = False
+                with self._task_refresh_lock:
+                    self._task_refresh_inflight = False
+                    if self._task_refresh_queued:
+                        rerun = True
+                        self._task_refresh_queued = False
 
-        threading.Thread(target=_do, daemon=True).start()
+                self._task_progress_result = result_text
+                self._task_progress_pending = True
+                if rerun:
+                    self._task_refresh_trigger_pending = True
+
+        threading.Thread(target=_do, daemon=True, name="gui-task-refresh").start()
 
     def _find_browser(name: str) -> bool:
         if name == "edge":
@@ -974,7 +1045,7 @@ class MinerGUI:
             or not self.worker_thread.is_alive()
         ):
             return
-        self.refresh_tasks()
+        self.refresh_tasks(manual=False)
         try:
             interval = int(self.task_interval_var.get().strip() or "30")
         except ValueError:
