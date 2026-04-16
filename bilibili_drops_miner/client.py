@@ -353,8 +353,19 @@ class BilibiliClient:
             retry_on_wbi_miss=True,
         )
         if payload.get("code") != 0:
+            api_code = payload.get("code")
+            api_message = payload.get("message")
+            risk_control = str(api_code) == "-352" or str(api_message).strip() == "-352"
+            if risk_control:
+                raise ValueError(
+                    "获取弹幕配置失败 "
+                    f"room_id={room_id}: 疑似直播风控/访问受限 "
+                    f"(code={api_code}, message={api_message})，"
+                    "建议降低并发、延长重连间隔、稍后重试或更换网络"
+                )
             raise ValueError(
-                f"获取弹幕配置失败 room_id={room_id}: {payload.get('message')}"
+                f"获取弹幕配置失败 room_id={room_id}: "
+                f"code={api_code}, message={api_message}"
             )
         data = payload.get("data") or {}
         host_list = data.get("host_list") or []
