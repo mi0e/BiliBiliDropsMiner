@@ -234,10 +234,6 @@ class BilibiliWatchTimeMiner:
                             timeout=graceful_budget,
                         )
                     except asyncio.TimeoutError:
-                        LOGGER.info(
-                            "优雅停止超时（%.1fs），切换为强制停止",
-                            graceful_budget,
-                        )
                         self._request_force_stop()
                 else:
                     self._request_force_stop()

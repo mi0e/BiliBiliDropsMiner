@@ -42,9 +42,11 @@ class MinerGUI:
         self._size_collapsed = "980x630"
 
         self.log_queue: "queue.Queue[str]" = queue.Queue()
+        self.ui_task_queue: queue.Queue = queue.Queue()
         self.worker_thread: threading.Thread | None = None
         self.miner: BilibiliWatchTimeMiner | None = None
         self._stop_signal_set = False
+        self._ui_alive = True
 
         self.cookie_var = ctk.StringVar()
         self.rooms_var = ctk.StringVar(value="23612045")
@@ -317,10 +319,33 @@ class MinerGUI:
         )
 
     def _schedule_log_flush(self) -> None:
+        if not self._ui_alive:
+            return
         self._flush_log_queue()
-        self.root.after(120, self._schedule_log_flush)
+        try:
+            self.root.after(120, self._schedule_log_flush)
+        except Exception:
+            # Window may already be destroyed during app shutdown.
+            self._ui_alive = False
+
+    def _post_ui_task(self, callback, *args, **kwargs) -> None:
+        if not self._ui_alive:
+            return
+        self.ui_task_queue.put((callback, args, kwargs))
 
     def _flush_log_queue(self) -> None:
+        while True:
+            try:
+                callback, args, kwargs = self.ui_task_queue.get_nowait()
+            except queue.Empty:
+                break
+            if not self._ui_alive:
+                continue
+            try:
+                callback(*args, **kwargs)
+            except Exception:
+                logging.getLogger(__name__).exception("UI 任务执行失败")
+
         while True:
             try:
                 line = self.log_queue.get_nowait()
@@ -517,6 +542,15 @@ class MinerGUI:
     def clear_logs(self) -> None:
         self.log_text.delete("1.0", "end")
 
+    def _set_task_progress_text(self, text: str) -> None:
+        self._task_progress_result = text
+        self._task_progress_pending = True
+
+    def _complete_task_refresh(self, result_text: str, rerun: bool) -> None:
+        self._set_task_progress_text(result_text)
+        if rerun:
+            self._task_refresh_trigger_pending = True
+
     def refresh_tasks(self, *, manual: bool = True) -> None:
         cookie = self.cookie_var.get().strip()
         if not cookie:
@@ -525,21 +559,18 @@ class MinerGUI:
             return
         task_ids = parse_task_ids(self.task_ids_var.get().strip())
         if not task_ids:
-            self._task_progress_pending = True
-            self._task_progress_result = "无任务数据（未填写任务 ID）"
+            self._set_task_progress_text("无任务数据（未填写任务 ID）")
             return
 
         with self._task_refresh_lock:
             if self._task_refresh_inflight:
                 self._task_refresh_queued = True
                 if manual:
-                    self._task_progress_result = "已有刷新进行中，已排队下一次刷新..."
-                    self._task_progress_pending = True
+                    self._set_task_progress_text("已有刷新进行中，已排队下一次刷新...")
                 return
             self._task_refresh_inflight = True
 
-        self._task_progress_result = "正在刷新任务进度..."
-        self._task_progress_pending = True
+        self._set_task_progress_text("正在刷新任务进度...")
 
         def _do() -> None:
             result_text = ""
@@ -565,10 +596,7 @@ class MinerGUI:
                         rerun = True
                         self._task_refresh_queued = False
 
-                self._task_progress_result = result_text
-                self._task_progress_pending = True
-                if rerun:
-                    self._task_refresh_trigger_pending = True
+                self._post_ui_task(self._complete_task_refresh, result_text, rerun)
 
         threading.Thread(target=_do, daemon=True, name="gui-task-refresh").start()
 
@@ -978,13 +1006,14 @@ class MinerGUI:
                     time.sleep(1)
 
             except ImportError as e:
-                messagebox.showerror(
+                self._post_ui_task(
+                    messagebox.showerror,
                     "依赖缺失",
                     f"缺少依赖库，请安装后重试: {e}\n\n",
                 )
             except Exception as exc:
                 logging.getLogger(__name__).exception("自动获取失败")
-                messagebox.showerror("错误", f"自动获取失败: {exc}")
+                self._post_ui_task(messagebox.showerror, "错误", f"自动获取失败: {exc}")
             finally:
                 if cdp_session:
                     try:
@@ -1026,7 +1055,7 @@ class MinerGUI:
             task_ids = [t.get("task_id") for t in tasks if t.get("task_id")]
             if not task_ids:
                 raise ValueError("empty task list")
-            self.task_ids_var.set(",".join(task_ids))
+            self._post_ui_task(self.task_ids_var.set, ",".join(task_ids))
             logging.getLogger(__name__).info("任务ID获取成功: %s", ",".join(task_ids))
 
         self._browser_sniff(
@@ -1050,9 +1079,13 @@ class MinerGUI:
                 f"{c['name']}={c['value']}" for c in cookies if c.get("name")
             )
             if not cookie_str:
-                messagebox.showwarning("提示", "未获取到 Cookie，请确认已登录 B 站")
+                self._post_ui_task(
+                    messagebox.showwarning,
+                    "提示",
+                    "未获取到 Cookie，请确认已登录 B 站",
+                )
                 return
-            self.cookie_var.set(cookie_str)
+            self._post_ui_task(self.cookie_var.set, cookie_str)
             logging.getLogger(__name__).info("Cookie 获取成功")
 
         self._browser_sniff(
@@ -1182,6 +1215,7 @@ class MinerGUI:
             self.miner.update_notifier(new_notify_urls)
 
     def on_close(self) -> None:
+        self._ui_alive = False
         self.stop()
         self.root.after(150, self.root.destroy)
 
