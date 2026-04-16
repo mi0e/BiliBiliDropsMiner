@@ -6,12 +6,29 @@ import logging
 import os
 import queue
 import re
+import sys
 import threading
 import time
 from pathlib import Path
-from tkinter import filedialog, messagebox
 
-import customtkinter as ctk
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QCloseEvent, QFont, QTextCursor
+from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QFileDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QPlainTextEdit,
+    QProgressBar,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from bilibili_drops_miner.client import BilibiliClient
 from bilibili_drops_miner.config import MinerConfig
@@ -32,31 +49,49 @@ class QueueLogHandler(logging.Handler):
             self.handleError(record)
 
 
-class MinerGUI:
-    def __init__(self, root: ctk.CTk) -> None:
-        self.root = root
-        self.root.title("Bilibili 直播掉宝助手")
-        self.root.geometry("980x580")
-        self.root.minsize(800, 500)
-        self._size_expanded = "980x920"
-        self._size_collapsed = "980x580"
+_BUTTON_STYLES: dict[str, str] = {
+    "green": (
+        "QPushButton{background:#2ecc71;color:white;border:0;border-radius:4px;padding:6px 12px;}"
+        "QPushButton:hover{background:#27ae60;}"
+    ),
+    "red": (
+        "QPushButton{background:#e74c3c;color:white;border:0;border-radius:4px;padding:6px 12px;}"
+        "QPushButton:hover{background:#c0392b;}"
+    ),
+    "blue": (
+        "QPushButton{background:#3498db;color:white;border:0;border-radius:4px;padding:6px 12px;}"
+        "QPushButton:hover{background:#2980b9;}"
+    ),
+    "purple": (
+        "QPushButton{background:#9b59b6;color:white;border:0;border-radius:4px;padding:6px 12px;}"
+        "QPushButton:hover{background:#8e44ad;}"
+    ),
+    "gray": (
+        "QPushButton{background:#95a5a6;color:white;border:0;border-radius:4px;padding:6px 12px;}"
+        "QPushButton:hover{background:#7f8c8d;}"
+    ),
+    "": "QPushButton{padding:6px 12px;}",
+}
+
+
+class MinerGUI(QMainWindow):
+    # Cross-thread UI dispatcher. Any background thread may emit this signal;
+    # Qt auto-queues the call onto the GUI thread (sender lives in non-Qt thread).
+    ui_call = Signal(object, tuple, dict)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setWindowTitle("Bilibili 直播掉宝助手")
+        self.resize(980, 580)
+        self.setMinimumSize(800, 500)
+        self._size_expanded = (980, 920)
+        self._size_collapsed = (980, 580)
 
         self.log_queue: "queue.Queue[str]" = queue.Queue()
-        self.ui_task_queue: queue.Queue = queue.Queue()
         self.worker_thread: threading.Thread | None = None
         self.miner: BilibiliWatchTimeMiner | None = None
         self._stop_signal_set = False
         self._ui_alive = True
-
-        self.cookie_var = ctk.StringVar()
-        self.rooms_var = ctk.StringVar(value="23612045")
-        self.threads_var = ctk.StringVar(value="1")
-        self.reconnect_var = ctk.StringVar(value="8")
-        self.task_ids_var = ctk.StringVar()
-        self.task_interval_var = ctk.StringVar(value="30")
-        self.notify_urls_var = ctk.StringVar()
-        self.verbose_var = ctk.BooleanVar(value=False)
-        self.disable_task_notify_var = ctk.BooleanVar(value=False)
 
         self._last_verbose: bool | None = None
         self._task_progress_result: str = ""
@@ -70,303 +105,296 @@ class MinerGUI:
         self._stop_timeout_warned: bool = False
         self._stop_force_sent: bool = False
         self._auto_force_stop_after_seconds: float = 2.0
-        self._resizing_until: float = 0.0
+
+        self.ui_call.connect(self._on_ui_call, Qt.QueuedConnection)
 
         self._build_layout()
         self._install_logging()
-        self._schedule_log_flush()
-        self.root.bind("<Configure>", self._on_root_configure, add="+")
 
-    def _on_root_configure(self, event) -> None:
-        if event.widget is self.root:
-            self._resizing_until = time.monotonic() + 0.15
+        self._log_timer = QTimer(self)
+        self._log_timer.setInterval(120)
+        self._log_timer.timeout.connect(self._flush_log_queue)
+        self._log_timer.start()
+
+        self._stop_poll_timer = QTimer(self)
+        self._stop_poll_timer.setInterval(120)
+        self._stop_poll_timer.timeout.connect(self._poll_worker_shutdown)
+
+        self._config_sync_timer = QTimer(self)
+        self._config_sync_timer.setInterval(2000)
+        self._config_sync_timer.timeout.connect(self._sync_config_to_miner)
+
+        self._task_refresh_timer = QTimer(self)
+        self._task_refresh_timer.setSingleShot(True)
+        self._task_refresh_timer.timeout.connect(self._schedule_task_refresh)
+
+    # ---------- layout ----------
 
     def _build_layout(self) -> None:
-        # --- Config section ---
-        config_frame = ctk.CTkFrame(self.root)
-        config_frame.pack(fill="x", padx=16, pady=(16, 8))
+        central = QWidget(self)
+        self.setCentralWidget(central)
+        root_layout = QVBoxLayout(central)
+        root_layout.setContentsMargins(16, 16, 16, 16)
+        root_layout.setSpacing(8)
 
-        title = ctk.CTkLabel(
-            config_frame,
-            text="Bilibili 直播掉宝助手",
-            font=ctk.CTkFont(size=20, weight="bold"),
+        # ---- Config card ----
+        config_card = QFrame()
+        config_card.setObjectName("card")
+        config_card.setStyleSheet("QFrame#card{background:#2b2b2b;border-radius:8px;}")
+        config_layout = QVBoxLayout(config_card)
+        config_layout.setContentsMargins(16, 12, 16, 12)
+        config_layout.setSpacing(6)
+
+        title = QLabel("Bilibili 直播掉宝助手")
+        title_font = QFont()
+        title_font.setPointSize(14)
+        title_font.setBold(True)
+        title.setFont(title_font)
+        config_layout.addWidget(title)
+
+        self.cookie_edit = self._make_line_edit("必填: SESSDATA=xxx; bili_jct=xxx; DedeUserID=xxx")
+        self.rooms_edit = self._make_line_edit("必填: 直播间号，多个用逗号分隔")
+        self.rooms_edit.setText("23612045")
+        self.task_ids_edit = self._make_line_edit("可留空: F12 从 totalv2 请求中提取 task_ids")
+        self.notify_urls_edit = self._make_line_edit("可留空: Apprise URL，如 gotify://host/token")
+
+        config_layout.addLayout(
+            self._build_labeled_row(
+                "Cookie", self.cookie_edit, ("自动获取", "purple", self.auto_fetch_cookie)
+            )
         )
-        title.pack(anchor="w", padx=16, pady=(12, 8))
-
-        # Main input fields
-        fields_frame = ctk.CTkFrame(config_frame, fg_color="transparent")
-        fields_frame.pack(fill="x", padx=16, pady=(0, 4))
-
-        self._add_entry(
-            fields_frame,
-            0,
-            "Cookie",
-            self.cookie_var,
-            placeholder="必填: SESSDATA=xxx; bili_jct=xxx; DedeUserID=xxx",
+        config_layout.addLayout(self._build_labeled_row("房间号", self.rooms_edit))
+        config_layout.addLayout(
+            self._build_labeled_row(
+                "任务 ID",
+                self.task_ids_edit,
+                ("自动获取", "blue", self.auto_fetch_task_ids),
+            )
         )
-        ctk.CTkButton(
-            fields_frame,
-            text="自动获取",
-            width=80,
-            command=self.auto_fetch_cookie,
-            fg_color="#9b59b6",
-            hover_color="#8e44ad",
-        ).grid(row=0, column=2, padx=(4, 0), pady=3)
+        config_layout.addLayout(self._build_labeled_row("通知 URL", self.notify_urls_edit))
 
-        self._add_entry(
-            fields_frame,
-            1,
-            "房间号",
-            self.rooms_var,
-            placeholder="必填: 直播间号，多个用逗号分隔",
+        # small numeric row
+        self.threads_edit = self._make_small_edit("1")
+        self.reconnect_edit = self._make_small_edit("8")
+        self.task_interval_edit = self._make_small_edit("30")
+        self.verbose_check = QCheckBox("详细日志")
+        self.disable_task_notify_check = QCheckBox("禁用任务完成通知")
+
+        num_row = QHBoxLayout()
+        num_row.setSpacing(12)
+        num_row.addWidget(QLabel("线程数"))
+        num_row.addWidget(self.threads_edit)
+        num_row.addSpacing(8)
+        num_row.addWidget(QLabel("重连延迟(s)"))
+        num_row.addWidget(self.reconnect_edit)
+        num_row.addSpacing(8)
+        num_row.addWidget(QLabel("任务查询间隔(s)"))
+        num_row.addWidget(self.task_interval_edit)
+        num_row.addSpacing(12)
+        num_row.addWidget(self.verbose_check)
+        num_row.addWidget(self.disable_task_notify_check)
+        num_row.addStretch(1)
+        config_layout.addLayout(num_row)
+
+        # buttons
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        btn_row.addWidget(self._make_button("启动", "green", self.start))
+        btn_row.addWidget(self._make_button("停止", "red", self.stop))
+        btn_row.addWidget(self._make_button("加载配置", "", self.load_config))
+        btn_row.addWidget(self._make_button("保存配置", "", self.save_config))
+        btn_row.addWidget(self._make_button("清空日志", "gray", self.clear_logs))
+        btn_row.addStretch(1)
+        config_layout.addLayout(btn_row)
+
+        # indeterminate progress bar (Qt handles animation natively)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setFixedHeight(6)
+        self.progress_bar.setRange(0, 1)  # stopped state
+        self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(False)
+        config_layout.addWidget(self.progress_bar)
+
+        root_layout.addWidget(config_card)
+
+        # ---- Task progress card ----
+        task_card = QFrame()
+        task_card.setObjectName("card")
+        task_card.setStyleSheet("QFrame#card{background:#2b2b2b;border-radius:8px;}")
+        task_layout = QVBoxLayout(task_card)
+        task_layout.setContentsMargins(12, 8, 12, 8)
+        task_layout.setSpacing(4)
+
+        task_header = QHBoxLayout()
+        task_title = QLabel("任务进度")
+        tf = QFont()
+        tf.setPointSize(11)
+        tf.setBold(True)
+        task_title.setFont(tf)
+        task_header.addWidget(task_title)
+        task_header.addStretch(1)
+        task_header.addWidget(self._make_button("手动刷新", "", self.refresh_tasks))
+        task_layout.addLayout(task_header)
+
+        self.task_text = QPlainTextEdit()
+        self.task_text.setReadOnly(True)
+        self.task_text.setFont(QFont("Consolas", 10))
+        self.task_text.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.task_text.setFixedHeight(180)
+        self.task_text.setPlainText("点击“手动刷新”查看任务进度")
+        task_layout.addWidget(self.task_text)
+
+        root_layout.addWidget(task_card)
+
+        # ---- Log card (collapsible, default collapsed) ----
+        self.log_card = QFrame()
+        self.log_card.setObjectName("card")
+        self.log_card.setStyleSheet("QFrame#card{background:#2b2b2b;border-radius:8px;}")
+        log_layout = QVBoxLayout(self.log_card)
+        log_layout.setContentsMargins(12, 8, 12, 8)
+        log_layout.setSpacing(4)
+
+        self._log_toggle_btn = QPushButton("▶ 运行日志")
+        lf = QFont()
+        lf.setPointSize(11)
+        lf.setBold(True)
+        self._log_toggle_btn.setFont(lf)
+        self._log_toggle_btn.setFlat(True)
+        self._log_toggle_btn.setStyleSheet(
+            "QPushButton{text-align:left;padding:4px;border:0;}"
+            "QPushButton:hover{background:#3a3a3a;}"
         )
-        self._add_entry(
-            fields_frame,
-            2,
-            "任务 ID",
-            self.task_ids_var,
-            placeholder="可留空: F12 从 totalv2 请求中提取 task_ids",
-        )
-        ctk.CTkButton(
-            fields_frame,
-            text="自动获取",
-            width=80,
-            command=self.auto_fetch_task_ids,
-            fg_color="#3498db",
-            hover_color="#2980b9",
-        ).grid(row=2, column=2, padx=(4, 0), pady=3)
+        self._log_toggle_btn.clicked.connect(self._toggle_log)
+        log_layout.addWidget(self._log_toggle_btn)
 
-        self._add_entry(
-            fields_frame,
-            3,
-            "通知 URL",
-            self.notify_urls_var,
-            placeholder="可留空: Apprise URL，如 gotify://host/token",
-        )
+        self.log_text = QPlainTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setFont(QFont("Consolas", 10))
+        self.log_text.setMaximumBlockCount(5000)
+        self.log_text.setVisible(False)
+        log_layout.addWidget(self.log_text)
 
-        fields_frame.columnconfigure(1, weight=1)
+        root_layout.addWidget(self.log_card)
+        root_layout.addStretch(1)
 
-        # Small numeric fields
-        num_frame = ctk.CTkFrame(config_frame, fg_color="transparent")
-        num_frame.pack(fill="x", padx=16, pady=(4, 4))
-
-        self._add_small_entry(num_frame, 0, "线程数", self.threads_var)
-        self._add_small_entry(num_frame, 1, "重连延迟(s)", self.reconnect_var)
-        self._add_small_entry(
-            num_frame,
-            2,
-            "任务查询间隔(s)",
-            self.task_interval_var,
-        )
-        ctk.CTkSwitch(
-            num_frame,
-            text="详细日志",
-            variable=self.verbose_var,
-            width=40,
-        ).pack(side="left", padx=(8, 16))
-        ctk.CTkSwitch(
-            num_frame,
-            text="禁用任务完成通知",
-            variable=self.disable_task_notify_var,
-            width=40,
-        ).pack(side="left", padx=(0, 16))
-
-        # Buttons
-        btn_frame = ctk.CTkFrame(config_frame, fg_color="transparent")
-        btn_frame.pack(fill="x", padx=16, pady=(4, 12))
-
-        ctk.CTkButton(
-            btn_frame,
-            text="启动",
-            width=100,
-            command=self.start,
-            fg_color="#2ecc71",
-            hover_color="#27ae60",
-        ).pack(side="left", padx=(0, 8))
-        ctk.CTkButton(
-            btn_frame,
-            text="停止",
-            width=100,
-            command=self.stop,
-            fg_color="#e74c3c",
-            hover_color="#c0392b",
-        ).pack(side="left", padx=(0, 8))
-        ctk.CTkButton(
-            btn_frame,
-            text="加载配置",
-            width=100,
-            command=self.load_config,
-        ).pack(side="left", padx=(0, 8))
-        ctk.CTkButton(
-            btn_frame,
-            text="保存配置",
-            width=100,
-            command=self.save_config,
-        ).pack(side="left", padx=(0, 8))
-        ctk.CTkButton(
-            btn_frame,
-            text="清空日志",
-            width=100,
-            command=self.clear_logs,
-            fg_color="#95a5a6",
-            hover_color="#7f8c8d",
-        ).pack(side="left", padx=(0, 8))
-
-        # --- Running indicator (sliding block on canvas) ---
-        self._progress_canvas = ctk.CTkCanvas(
-            config_frame,
-            height=4,
-            highlightthickness=0,
-            bg=config_frame.cget("fg_color")
-            if isinstance(config_frame.cget("fg_color"), str)
-            else config_frame.cget("fg_color")[1],
-        )
-        self._progress_running = False
-        # hidden until running
-
-        # --- Task Progress section ---
-        task_frame = ctk.CTkFrame(self.root)
-        task_frame.pack(fill="x", padx=16, pady=(0, 8))
-
-        task_header = ctk.CTkFrame(task_frame, fg_color="transparent")
-        task_header.pack(fill="x", padx=12, pady=(8, 4))
-
-        ctk.CTkLabel(
-            task_header,
-            text="任务进度",
-            font=ctk.CTkFont(size=14, weight="bold"),
-        ).pack(side="left")
-        ctk.CTkButton(
-            task_header,
-            text="手动刷新",
-            width=80,
-            command=self.refresh_tasks,
-        ).pack(side="right")
-
-        self.task_text = ctk.CTkTextbox(
-            task_frame,
-            font=ctk.CTkFont(family="Consolas", size=12),
-            wrap="none",
-            height=180,
-        )
-        self.task_text.pack(fill="x", padx=8, pady=(0, 8))
-        self.task_text.insert("1.0", "点击“手动刷新”查看任务进度")
-
-        # --- Log section (collapsible, default collapsed) ---
-        self._log_frame = ctk.CTkFrame(self.root)
-        self._log_frame.pack(fill="x", padx=16, pady=(0, 16))
-
-        log_header = ctk.CTkFrame(self._log_frame, fg_color="transparent")
-        log_header.pack(fill="x", padx=12, pady=(8, 4))
-
-        self._log_toggle_btn = ctk.CTkButton(
-            log_header,
-            text="▶ 运行日志",
-            font=ctk.CTkFont(size=14, weight="bold"),
-            fg_color="transparent",
-            hover_color=("gray75", "gray30"),
-            text_color=("gray10", "gray90"),
-            anchor="w",
-            command=self._toggle_log,
-        )
-        self._log_toggle_btn.pack(side="left")
-
-        self.log_text = ctk.CTkTextbox(
-            self._log_frame, font=ctk.CTkFont(family="Consolas", size=12), wrap="word"
-        )
-        # Default collapsed - don't pack log_text
         self._log_expanded = False
 
-    @staticmethod
-    def _add_entry(
-        parent: ctk.CTkFrame,
-        row: int,
-        label: str,
-        text_var: ctk.StringVar,
-        *,
-        placeholder: str = "",
-    ) -> None:
-        ctk.CTkLabel(parent, text=label, width=100, anchor="w").grid(
-            row=row, column=0, sticky="w", pady=3
-        )
-        ctk.CTkEntry(parent, textvariable=text_var, placeholder_text=placeholder).grid(
-            row=row, column=1, sticky="ew", pady=3, padx=(4, 0)
-        )
+    def _make_line_edit(self, placeholder: str) -> QLineEdit:
+        w = QLineEdit()
+        w.setPlaceholderText(placeholder)
+        return w
 
-    @staticmethod
-    def _add_small_entry(
-        parent: ctk.CTkFrame, col: int, label: str, text_var: ctk.StringVar
-    ) -> None:
-        sub = ctk.CTkFrame(parent, fg_color="transparent")
-        sub.pack(side="left", padx=(0, 16))
-        ctk.CTkLabel(sub, text=label).pack(side="left", padx=(0, 4))
-        ctk.CTkEntry(sub, textvariable=text_var, width=70).pack(side="left")
+    def _make_small_edit(self, default: str) -> QLineEdit:
+        w = QLineEdit()
+        w.setText(default)
+        w.setFixedWidth(70)
+        return w
+
+    def _make_button(self, text: str, color: str, slot) -> QPushButton:
+        btn = QPushButton(text)
+        btn.setStyleSheet(_BUTTON_STYLES.get(color, _BUTTON_STYLES[""]))
+        btn.clicked.connect(slot)
+        return btn
+
+    def _build_labeled_row(
+        self,
+        label: str,
+        editor: QLineEdit,
+        extra_button: tuple[str, str, object] | None = None,
+    ) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setSpacing(4)
+        lab = QLabel(label)
+        lab.setFixedWidth(80)
+        row.addWidget(lab)
+        row.addWidget(editor, 1)
+        if extra_button is not None:
+            text, color, slot = extra_button
+            b = self._make_button(text, color, slot)
+            b.setFixedWidth(90)
+            row.addWidget(b)
+        return row
+
+    # ---------- logging / cross-thread ----------
 
     def _install_logging(self) -> None:
         queue_handler = QueueLogHandler(self.log_queue)
         setup_logging(
-            verbose=self.verbose_var.get(),
+            verbose=self.verbose_check.isChecked(),
             no_color=True,
             extra_handlers=[queue_handler],
         )
 
-    def _schedule_log_flush(self) -> None:
-        if not self._ui_alive:
-            return
-        self._flush_log_queue()
-        try:
-            self.root.after(120, self._schedule_log_flush)
-        except Exception:
-            # Window may already be destroyed during app shutdown.
-            self._ui_alive = False
-
     def _post_ui_task(self, callback, *args, **kwargs) -> None:
+        """Thread-safe dispatch onto the GUI thread. Drop-in replacement for the
+        original Tk-era helper; all workers keep calling this same API."""
         if not self._ui_alive:
             return
-        self.ui_task_queue.put((callback, args, kwargs))
+        self.ui_call.emit(callback, args, kwargs)
+
+    def _on_ui_call(self, fn, args, kwargs) -> None:
+        if not self._ui_alive:
+            return
+        try:
+            fn(*args, **kwargs)
+        except Exception:
+            logging.getLogger(__name__).exception("UI 任务执行失败")
 
     def _flush_log_queue(self) -> None:
+        if not self._ui_alive:
+            return
+        # Drain the log queue in a single batch; appendPlainText per line is
+        # still cheap for the 120ms tick, far cheaper than canvas redraws.
+        lines: list[str] = []
         while True:
             try:
-                callback, args, kwargs = self.ui_task_queue.get_nowait()
+                lines.append(self.log_queue.get_nowait())
             except queue.Empty:
                 break
-            if not self._ui_alive:
-                continue
-            try:
-                callback(*args, **kwargs)
-            except Exception:
-                logging.getLogger(__name__).exception("UI 任务执行失败")
+        if lines:
+            self.log_text.appendPlainText("\n".join(lines))
+            cursor = self.log_text.textCursor()
+            cursor.movePosition(QTextCursor.End)
+            self.log_text.setTextCursor(cursor)
 
-        while True:
-            try:
-                line = self.log_queue.get_nowait()
-            except queue.Empty:
-                break
-            self.log_text.insert("end", line + "\n")
-            self.log_text.see("end")
         if self._task_progress_pending:
             self._task_progress_pending = False
-            self.task_text.delete("1.0", "end")
-            self.task_text.insert("1.0", self._task_progress_result)
+            self.task_text.setPlainText(self._task_progress_result)
+
         if self._task_refresh_trigger_pending:
             self._task_refresh_trigger_pending = False
             self.refresh_tasks(manual=False)
 
+    # ---------- message helpers (main thread only) ----------
+
+    def _show_info(self, title: str, msg: str) -> None:
+        QMessageBox.information(self, title, msg)
+
+    def _show_warning(self, title: str, msg: str) -> None:
+        QMessageBox.warning(self, title, msg)
+
+    def _show_error(self, title: str, msg: str) -> None:
+        QMessageBox.critical(self, title, msg)
+
+    # ---------- config ----------
+
     def _build_config(self) -> MinerConfig:
         return MinerConfig(
-            cookie=self.cookie_var.get().strip(),
-            room_ids=parse_room_ids(self.rooms_var.get().strip()),
-            thread_count=int(self.threads_var.get().strip() or "1"),
-            reconnect_delay_seconds=int(self.reconnect_var.get().strip() or "8"),
+            cookie=self.cookie_edit.text().strip(),
+            room_ids=parse_room_ids(self.rooms_edit.text().strip()),
+            thread_count=int(self.threads_edit.text().strip() or "1"),
+            reconnect_delay_seconds=int(self.reconnect_edit.text().strip() or "8"),
             enable_web_heartbeat=True,
-            task_ids=parse_task_ids(self.task_ids_var.get().strip()),
+            task_ids=parse_task_ids(self.task_ids_edit.text().strip()),
             task_query_interval_seconds=int(
-                self.task_interval_var.get().strip() or "30"
+                self.task_interval_edit.text().strip() or "30"
             ),
-            notify_urls=parse_task_ids(self.notify_urls_var.get().strip()),
-            notify_on_task_complete=not self.disable_task_notify_var.get(),
+            notify_urls=parse_task_ids(self.notify_urls_edit.text().strip()),
+            notify_on_task_complete=not self.disable_task_notify_check.isChecked(),
         )
+
+    # ---------- start / stop ----------
 
     def start(self) -> None:
         self._stop_signal_set = False
@@ -375,10 +403,7 @@ class MinerGUI:
         self._stop_timeout_warned = False
         self._stop_force_sent = False
         if self.worker_thread and self.worker_thread.is_alive():
-            messagebox.showinfo(
-                "运行中",
-                "助手已在运行中。",
-            )
+            self._show_info("运行中", "助手已在运行中。")
             return
         try:
             self._install_logging()
@@ -386,7 +411,7 @@ class MinerGUI:
             config.validate()
             self.miner = BilibiliWatchTimeMiner(config)
         except Exception as exc:
-            messagebox.showerror("配置错误", str(exc))
+            self._show_error("配置错误", str(exc))
             return
 
         def runner() -> None:
@@ -402,21 +427,8 @@ class MinerGUI:
         self.worker_thread.start()
         logging.getLogger(__name__).info("掉宝助手已启动")
         self._start_progress_animation()
-        self._schedule_config_sync()
+        self._config_sync_timer.start()
         self._schedule_task_refresh()
-
-    def _toggle_log(self) -> None:
-        if self._log_expanded:
-            self.log_text.pack_forget()
-            self._log_frame.pack_configure(fill="x", expand=False)
-            self._log_toggle_btn.configure(text="▶ 运行日志")
-            self.root.geometry(self._size_collapsed)
-        else:
-            self._log_frame.pack_configure(fill="both", expand=True)
-            self.log_text.pack(fill="both", expand=True, padx=8, pady=(0, 8))
-            self._log_toggle_btn.configure(text="▼ 运行日志")
-            self.root.geometry(self._size_expanded)
-        self._log_expanded = not self._log_expanded
 
     def stop(self) -> None:
         self._stop_signal_set = True
@@ -445,11 +457,12 @@ class MinerGUI:
         if self.miner is not None:
             self.miner.stop(force=False)
         logger.info("正在停止...")
-        self._poll_worker_shutdown()
+        self._stop_poll_timer.start()
 
     def _poll_worker_shutdown(self) -> None:
         logger = logging.getLogger(__name__)
         if self.worker_thread is None:
+            self._stop_poll_timer.stop()
             self.miner = None
             self._stopping_in_progress = False
             self._stop_poll_started_at = None
@@ -474,9 +487,9 @@ class MinerGUI:
             if elapsed >= 5 and not self._stop_timeout_warned:
                 logger.warning("停止超过 5 秒，后台线程仍在退出中")
                 self._stop_timeout_warned = True
-            self.root.after(120, self._poll_worker_shutdown)
             return
 
+        self._stop_poll_timer.stop()
         logger.info("停止成功")
         self.worker_thread = None
         self.miner = None
@@ -485,57 +498,34 @@ class MinerGUI:
         self._stop_timeout_warned = False
         self._stop_force_sent = False
 
+    # ---------- progress bar (Qt-native indeterminate) ----------
+
     def _start_progress_animation(self) -> None:
-        self._progress_running = True
-        self._progress_pos = 0.0
-        self._progress_dir = 1
-        canvas = self._progress_canvas
-        canvas.pack(fill="x", padx=16, pady=(0, 4))
-
-        canvas.delete("all")
-        self._progress_track_id = canvas.create_rectangle(
-            0, 1, 1, 3, fill="#333333", outline=""
-        )
-        self._progress_block_id = canvas.create_rectangle(
-            0, 0, 1, 4, fill="#3498db", outline=""
-        )
-        self._progress_last_w = 0
-
-        def _tick():
-            if not self._progress_running:
-                return
-            w = canvas.winfo_width()
-            if w < 2:
-                self.root.after(20, _tick)
-                return
-            self._progress_pos += 0.004 * self._progress_dir
-            if self._progress_pos >= 1.0:
-                self._progress_pos = 1.0
-                self._progress_dir = -1
-            elif self._progress_pos <= 0.0:
-                self._progress_pos = 0.0
-                self._progress_dir = 1
-
-            block_w = max(40, w // 6)
-            x = self._progress_pos * (w - block_w)
-            if w != self._progress_last_w:
-                canvas.coords(self._progress_track_id, 0, 1, w, 3)
-                self._progress_last_w = w
-            canvas.coords(self._progress_block_id, x, 0, x + block_w, 4)
-            if time.monotonic() < self._resizing_until:
-                self.root.after(100, _tick)
-            else:
-                self.root.after(8, _tick)
-
-        _tick()
+        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setVisible(True)
 
     def _stop_progress_animation(self) -> None:
-        self._progress_running = False
-        self._progress_canvas.delete("all")
-        self._progress_canvas.pack_forget()
+        self.progress_bar.setRange(0, 1)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(False)
+
+    # ---------- log / layout toggle ----------
+
+    def _toggle_log(self) -> None:
+        if self._log_expanded:
+            self.log_text.setVisible(False)
+            self._log_toggle_btn.setText("▶ 运行日志")
+            self.resize(*self._size_collapsed)
+        else:
+            self.log_text.setVisible(True)
+            self._log_toggle_btn.setText("▼ 运行日志")
+            self.resize(*self._size_expanded)
+        self._log_expanded = not self._log_expanded
 
     def clear_logs(self) -> None:
-        self.log_text.delete("1.0", "end")
+        self.log_text.clear()
+
+    # ---------- task progress ----------
 
     def _set_task_progress_text(self, text: str) -> None:
         self._task_progress_result = text
@@ -546,13 +536,14 @@ class MinerGUI:
         if rerun:
             self._task_refresh_trigger_pending = True
 
-    def refresh_tasks(self, *, manual: bool = True) -> None:
-        cookie = self.cookie_var.get().strip()
+    def refresh_tasks(self, *args, manual: bool = True, **kwargs) -> None:
+        # QPushButton.clicked may pass a bool (checked) — ignore positional args.
+        cookie = self.cookie_edit.text().strip()
         if not cookie:
             if manual:
-                messagebox.showwarning("提示", "请先填写 Cookie")
+                self._show_warning("提示", "请先填写 Cookie")
             return
-        task_ids = parse_task_ids(self.task_ids_var.get().strip())
+        task_ids = parse_task_ids(self.task_ids_edit.text().strip())
         if not task_ids:
             self._set_task_progress_text("无任务数据（未填写任务 ID）")
             return
@@ -590,11 +581,11 @@ class MinerGUI:
                     if self._task_refresh_queued:
                         rerun = True
                         self._task_refresh_queued = False
-
                 self._post_ui_task(self._complete_task_refresh, result_text, rerun)
 
         threading.Thread(target=_do, daemon=True, name="gui-task-refresh").start()
 
+    @staticmethod
     def _find_browser(name: str) -> bool:
         if name == "edge":
             paths = [
@@ -633,7 +624,13 @@ class MinerGUI:
         return None
 
     def _apply_auto_room_id(self, room_id: int) -> None:
-        self.rooms_var.set(str(room_id))
+        self.rooms_edit.setText(str(room_id))
+
+    def _apply_auto_cookie(self, cookie_str: str) -> None:
+        self.cookie_edit.setText(cookie_str)
+
+    def _apply_auto_task_ids(self, task_ids_str: str) -> None:
+        self.task_ids_edit.setText(task_ids_str)
 
     def _browser_sniff(
         self,
@@ -663,7 +660,6 @@ class MinerGUI:
                 net_captured: list = []
                 cookie_captured: list = []
 
-                # ---- 本地 HTTP 服务 ----
                 class _Handler(BaseHTTPRequestHandler):
                     def do_POST(self):
                         length = int(self.headers.get("Content-Length", 0))
@@ -694,7 +690,6 @@ class MinerGUI:
                 port = server.server_address[1]
                 threading.Thread(target=server.serve_forever, daemon=True).start()
 
-                # ---- 构建扩展 ----
                 ext_dir = tempfile.mkdtemp(prefix="bili_sniff_")
 
                 def _write_ext_edge() -> None:
@@ -795,11 +790,11 @@ class MinerGUI:
                             f.write(content)
 
                 def _write_ext_chrome() -> None:
-                    port = server.server_address[1]
+                    port_local = server.server_address[1]
                     relay_js = (
                         "window.addEventListener('message',function(e){\n"
                         "  if(e.data && e.data.type==='__bili_sniff__'){\n"
-                        "    fetch('http://127.0.0.1:" + str(port) + "/',{\n"
+                        "    fetch('http://127.0.0.1:" + str(port_local) + "/',{\n"
                         "      method:'POST',\n"
                         "      headers:{'Content-Type':'application/json'},\n"
                         "      body:JSON.stringify(e.data.payload)\n"
@@ -810,7 +805,7 @@ class MinerGUI:
 
                     background_js = (
                         "var injectedTabs = {};\n"
-                        "var PORT = " + str(port) + ";\n"
+                        "var PORT = " + str(port_local) + ";\n"
                         "function injectTab(tabId) {\n"
                         "  if (injectedTabs[tabId]) return;\n"
                         "  injectedTabs[tabId] = true;\n"
@@ -820,7 +815,7 @@ class MinerGUI:
                         "    func: function() {\n"
                         "      window.addEventListener('message', function(e) {\n"
                         "        if (e.data && e.data.type === '__bili_sniff__') {\n"
-                        "          fetch('http://127.0.0.1:" + str(port) + "/', {\n"
+                        "          fetch('http://127.0.0.1:" + str(port_local) + "/', {\n"
                         "            method: 'POST',\n"
                         "            headers: {'Content-Type': 'application/json'},\n"
                         "            body: JSON.stringify(e.data.payload)\n"
@@ -836,7 +831,6 @@ class MinerGUI:
                         "      if (window.__bili_sniff_injected__) return;\n"
                         "      window.__bili_sniff_injected__ = true;\n"
                         "      var kw = '" + (url_keyword or "") + "';\n"
-                        "      // fetch 攔截（同你原本的邏輯）\n"
                         "      var origFetch = window.fetch;\n"
                         "      window.fetch = async function() {\n"
                         "        var resp = await origFetch.apply(this, arguments);\n"
@@ -849,7 +843,6 @@ class MinerGUI:
                         "        }\n"
                         "        return resp;\n"
                         "      };\n"
-                        "      // XHR 攔截（保持你原本邏輯）\n"
                         "      var origOpen = XMLHttpRequest.prototype.open;\n"
                         "      var origSend = XMLHttpRequest.prototype.send;\n"
                         "      XMLHttpRequest.prototype.open = function(m, u) {\n"
@@ -955,7 +948,7 @@ class MinerGUI:
                             driver = webdriver.Chrome(options=_opts)
                             browser_type = "chrome"
                             try:
-                                ext_result = driver.webextension.install(path=ext_dir)
+                                driver.webextension.install(path=ext_dir)
                             except Exception as e:
                                 logging.getLogger(__name__).error(
                                     "安裝 extension 失败: %s", e
@@ -978,21 +971,18 @@ class MinerGUI:
                 driver.get("https://www.bilibili.com/")
                 logging.getLogger(__name__).info(hint)
 
-                # ---- 主等待循环 ----
                 cookie_done = False
                 net_done = False
                 last_cookie_count = 0
                 for i in range(120):
                     if need_cookie and not cookie_done and cookie_captured:
                         current_cookies = cookie_captured[-1]
-
                         has_sessdata = any(
                             c.get("name") == "SESSDATA" for c in current_cookies
                         )
                         has_dedeuid = any(
                             c.get("name") == "DedeUserID" for c in current_cookies
                         )
-
                         if has_sessdata and has_dedeuid:
                             filtered_cookies = [
                                 c
@@ -1026,13 +1016,13 @@ class MinerGUI:
 
             except ImportError as e:
                 self._post_ui_task(
-                    messagebox.showerror,
+                    self._show_error,
                     "依赖缺失",
                     f"缺少依赖库，请安装后重试: {e}\n\n",
                 )
             except Exception as exc:
                 logging.getLogger(__name__).exception("自动获取失败")
-                self._post_ui_task(messagebox.showerror, "错误", f"自动获取失败: {exc}")
+                self._post_ui_task(self._show_error, "错误", f"自动获取失败: {exc}")
             finally:
                 if cdp_session:
                     try:
@@ -1057,14 +1047,16 @@ class MinerGUI:
         threading.Thread(target=_do, daemon=True).start()
 
     def auto_fetch_task_ids(self) -> None:
-        ok = messagebox.askokcancel(
+        ok = QMessageBox.question(
+            self,
             "自动获取任务ID",
             "点击确定后会打开浏览器，请在 2 分钟内：\n\n"
             "打开有当前任务的直播间即可自动获取任务ID和房间号，\n"
             "或手动点击页面上的「刷新任务」按钮。\n\n"
             "捕获成功后浏览器会自动关闭。",
+            QMessageBox.Ok | QMessageBox.Cancel,
         )
-        if not ok:
+        if ok != QMessageBox.Ok:
             return
 
         def on_match(payload):
@@ -1087,7 +1079,7 @@ class MinerGUI:
             task_ids = [t.get("task_id") for t in tasks if t.get("task_id")]
             if not task_ids:
                 raise ValueError("empty task list")
-            self._post_ui_task(self.task_ids_var.set, ",".join(task_ids))
+            self._post_ui_task(self._apply_auto_task_ids, ",".join(task_ids))
             logging.getLogger(__name__).info("任务ID获取成功: %s", ",".join(task_ids))
 
         self._browser_sniff(
@@ -1097,13 +1089,15 @@ class MinerGUI:
         )
 
     def auto_fetch_cookie(self) -> None:
-        ok = messagebox.askokcancel(
+        ok = QMessageBox.question(
+            self,
             "自动获取Cookie",
             "点击确定后会打开浏览器，请在浏览器中登录 B 站。\n\n"
             "登录成功后 Cookie 会自动获取（含 httpOnly 字段），\n"
             "浏览器会自动关闭。",
+            QMessageBox.Ok | QMessageBox.Cancel,
         )
-        if not ok:
+        if ok != QMessageBox.Ok:
             return
 
         def on_cookies(cookies: list):
@@ -1112,12 +1106,12 @@ class MinerGUI:
             )
             if not cookie_str:
                 self._post_ui_task(
-                    messagebox.showwarning,
+                    self._show_warning,
                     "提示",
                     "未获取到 Cookie，请确认已登录 B 站",
                 )
                 return
-            self._post_ui_task(self.cookie_var.set, cookie_str)
+            self._post_ui_task(self._apply_auto_cookie, cookie_str)
             logging.getLogger(__name__).info("Cookie 获取成功")
 
         self._browser_sniff(
@@ -1135,10 +1129,10 @@ class MinerGUI:
             return
         self.refresh_tasks(manual=False)
         try:
-            interval = int(self.task_interval_var.get().strip() or "30")
+            interval = int(self.task_interval_edit.text().strip() or "30")
         except ValueError:
             interval = 30
-        self.root.after(max(10, interval) * 1000, self._schedule_task_refresh)
+        self._task_refresh_timer.start(max(10, interval) * 1000)
 
     @staticmethod
     def _format_task_progress(progresses: list) -> str:
@@ -1192,95 +1186,102 @@ class MinerGUI:
                 lines.append(f"  {bar}{status}")
         return "\n".join(lines)
 
-    def _schedule_config_sync(self) -> None:
-        self._sync_config_to_miner()
-        if (
-            not self._stop_signal_set
-            and self.worker_thread is not None
-            and self.worker_thread.is_alive()
-        ):
-            self.root.after(2000, self._schedule_config_sync)
-
     def _sync_config_to_miner(self) -> None:
         if self.miner is None:
+            if self._stop_signal_set or self.worker_thread is None:
+                self._config_sync_timer.stop()
             return
         config = self.miner.config
 
         try:
-            val = int(self.reconnect_var.get().strip() or "8")
+            val = int(self.reconnect_edit.text().strip() or "8")
             if val > 0:
                 config.reconnect_delay_seconds = val
         except ValueError:
             pass
         try:
-            val = int(self.task_interval_var.get().strip() or "30")
+            val = int(self.task_interval_edit.text().strip() or "30")
             if val > 0:
                 config.task_query_interval_seconds = val
         except ValueError:
             pass
 
-        config.notify_on_task_complete = not self.disable_task_notify_var.get()
+        config.notify_on_task_complete = not self.disable_task_notify_check.isChecked()
 
-        verbose = self.verbose_var.get()
-
+        verbose = self.verbose_check.isChecked()
         if verbose != self._last_verbose:
             self._last_verbose = verbose
             self._install_logging()
 
-        new_task_ids = parse_task_ids(self.task_ids_var.get().strip())
+        new_task_ids = parse_task_ids(self.task_ids_edit.text().strip())
         if new_task_ids != config.task_ids:
             config.task_ids = new_task_ids
 
-        new_cookie = self.cookie_var.get().strip()
+        new_cookie = self.cookie_edit.text().strip()
         if new_cookie and new_cookie != config.cookie:
             self.miner.update_cookie(new_cookie)
 
-        new_notify_urls = parse_task_ids(self.notify_urls_var.get().strip())
+        new_notify_urls = parse_task_ids(self.notify_urls_edit.text().strip())
         if new_notify_urls != config.notify_urls:
             self.miner.update_notifier(new_notify_urls)
 
-    def on_close(self) -> None:
+        if (
+            self._stop_signal_set
+            or self.worker_thread is None
+            or not self.worker_thread.is_alive()
+        ):
+            self._config_sync_timer.stop()
+
+    # ---------- close ----------
+
+    def closeEvent(self, event: QCloseEvent) -> None:
         self._ui_alive = False
-        self.stop()
-        self.root.after(150, self.root.destroy)
+        try:
+            self.stop()
+        except Exception:
+            logging.getLogger(__name__).exception("关闭时停止失败")
+        # Allow brief drain of background joins before Qt tears down
+        QTimer.singleShot(150, QApplication.instance().quit)
+        event.accept()
+
+    # ---------- config load/save ----------
 
     def load_config(self) -> None:
-        path = filedialog.askopenfilename(
-            title="加载配置文件",
-            filetypes=[
-                ("JSON 文件", "*.json"),
-                ("所有文件", "*.*"),
-            ],
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "加载配置文件",
+            "",
+            "JSON 文件 (*.json);;所有文件 (*.*)",
         )
         if not path:
             return
         try:
             data = json.loads(Path(path).read_text(encoding="utf-8"))
-            self.cookie_var.set(str(data.get("cookie", "")))
-            self.rooms_var.set(",".join(str(x) for x in data.get("room_ids", [])))
-            self.threads_var.set(str(data.get("thread_count", 1)))
-            self.reconnect_var.set(str(data.get("reconnect_delay_seconds", 8)))
-            self.task_ids_var.set(",".join(str(x) for x in data.get("task_ids", [])))
-            self.task_interval_var.set(str(data.get("task_query_interval_seconds", 30)))
-            self.notify_urls_var.set(
+            self.cookie_edit.setText(str(data.get("cookie", "")))
+            self.rooms_edit.setText(",".join(str(x) for x in data.get("room_ids", [])))
+            self.threads_edit.setText(str(data.get("thread_count", 1)))
+            self.reconnect_edit.setText(str(data.get("reconnect_delay_seconds", 8)))
+            self.task_ids_edit.setText(",".join(str(x) for x in data.get("task_ids", [])))
+            self.task_interval_edit.setText(
+                str(data.get("task_query_interval_seconds", 30))
+            )
+            self.notify_urls_edit.setText(
                 ",".join(str(x) for x in data.get("notify_urls", []))
             )
-            self.disable_task_notify_var.set(
+            self.disable_task_notify_check.setChecked(
                 not bool(data.get("notify_on_task_complete", True))
             )
-            self.verbose_var.set(bool(data.get("verbose", False)))
+            self.verbose_check.setChecked(bool(data.get("verbose", False)))
             logging.getLogger(__name__).info("配置已加载: %s", path)
         except Exception as exc:
-            messagebox.showerror("加载失败", str(exc))
+            self._show_error("加载失败", str(exc))
 
     def save_config(self) -> None:
-        path = filedialog.asksaveasfilename(
-            title="保存配置文件",
-            defaultextension=".json",
-            filetypes=[
-                ("JSON 文件", "*.json"),
-                ("所有文件", "*.*"),
-            ],
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "保存配置文件",
+            "config.json",
+            "JSON 文件 (*.json);;所有文件 (*.*)",
         )
         if not path:
             return
@@ -1296,21 +1297,26 @@ class MinerGUI:
                 "task_query_interval_seconds": config.task_query_interval_seconds,
                 "notify_urls": config.notify_urls,
                 "notify_on_task_complete": config.notify_on_task_complete,
-                "verbose": self.verbose_var.get(),
+                "verbose": self.verbose_check.isChecked(),
             }
             Path(path).write_text(
                 json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
             )
             logging.getLogger(__name__).info("配置已保存: %s", path)
         except Exception as exc:
-            messagebox.showerror("保存失败", str(exc))
+            self._show_error("保存失败", str(exc))
 
 
 def run_gui() -> int:
-    ctk.set_appearance_mode("dark")
-    ctk.set_default_color_theme("blue")
-    root = ctk.CTk()
-    app = MinerGUI(root)
-    root.protocol("WM_DELETE_WINDOW", app.on_close)
-    root.mainloop()
-    return 0
+    app = QApplication.instance() or QApplication(sys.argv)
+    # Dark palette-ish default via stylesheet
+    app.setStyleSheet(
+        "QWidget{background:#1f1f1f;color:#e0e0e0;}"
+        "QLineEdit,QPlainTextEdit{background:#2b2b2b;color:#e0e0e0;border:1px solid #3a3a3a;border-radius:4px;padding:4px;}"
+        "QCheckBox{spacing:6px;}"
+        "QProgressBar{background:#2b2b2b;border:0;border-radius:3px;}"
+        "QProgressBar::chunk{background:#3498db;border-radius:3px;}"
+    )
+    window = MinerGUI()
+    window.show()
+    return app.exec()

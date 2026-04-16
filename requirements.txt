@@ -1,5 +1,5 @@
 httpx
 colorama
-customtkinter
+PySide6
 apprise
 selenium
