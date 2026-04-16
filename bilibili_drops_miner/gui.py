@@ -102,10 +102,10 @@ class MinerGUI(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Bilibili 直播掉宝助手")
-        self.resize(1000, 750)
-        self.setMinimumSize(1000, 750)
+        self.resize(1000, 720)
+        self.setMinimumSize(1000, 720)
         self._size_expanded = (1000, 920)
-        self._size_collapsed = (1000, 750)
+        self._size_collapsed = (1000, 720)
 
         self.log_queue: "queue.Queue[str]" = queue.Queue()
         self.worker_thread: threading.Thread | None = None
@@ -181,10 +181,18 @@ class MinerGUI(QMainWindow):
 
         config_layout.addLayout(
             self._build_labeled_row(
-                "Cookie", self.cookie_edit, ("自动获取", "purple", self.auto_fetch_cookie)
+                "Cookie", 
+                self.cookie_edit, 
+                ("自动获取", "purple", self.auto_fetch_cookie)
             )
         )
-        config_layout.addLayout(self._build_labeled_row("房间号", self.rooms_edit))
+        config_layout.addLayout(
+            self._build_labeled_row(
+                "房间号",
+                self.rooms_edit,
+                ("自动获取", "blue", self.auto_fetch_room_id)
+            )
+        )
         config_layout.addLayout(
             self._build_labeled_row(
                 "任务 ID",
@@ -665,6 +673,7 @@ class MinerGUI(QMainWindow):
         hint: str,
         on_network_match=None,
         on_cookies=None,
+        on_page_url=None,
     ) -> None:
         def _do() -> None:
             server = None
@@ -683,6 +692,7 @@ class MinerGUI(QMainWindow):
 
                 need_net = bool(url_keyword and on_network_match)
                 need_cookie = on_cookies is not None
+                need_url = on_page_url is not None
 
                 net_captured: list = []
                 cookie_captured: list = []
@@ -1000,6 +1010,7 @@ class MinerGUI(QMainWindow):
 
                 cookie_done = False
                 net_done = False
+                url_done = False
                 last_cookie_count = 0
                 for i in range(120):
                     if need_cookie and not cookie_done and cookie_captured:
@@ -1036,7 +1047,24 @@ class MinerGUI(QMainWindow):
                         on_network_match(net_captured[0])
                         net_done = True
 
-                    if (not need_cookie or cookie_done) and (not need_net or net_done):
+                    if need_url and not url_done:
+                        try:
+                            cur_url = driver.current_url or ""
+                        except Exception:
+                            cur_url = ""
+                        room_id = MinerGUI._extract_room_id_from_live_url(cur_url)
+                        if room_id is not None:
+                            try:
+                                on_page_url(room_id)
+                            except Exception:
+                                logging.getLogger(__name__).exception("on_page_url 回调失败")
+                            url_done = True
+
+                    if (
+                        (not need_cookie or cookie_done)
+                        and (not need_net or net_done)
+                        and (not need_url or url_done)
+                    ):
                         break
 
                     time.sleep(1)
@@ -1072,6 +1100,28 @@ class MinerGUI(QMainWindow):
                     shutil.rmtree(ext_dir, ignore_errors=True)
 
         threading.Thread(target=_do, daemon=True).start()
+
+    def auto_fetch_room_id(self) -> None:
+        ok = QMessageBox.question(
+            self,
+            "自动获取房间号",
+            "点击确定后会打开浏览器，请在 2 分钟内进入目标直播间：\n\n"
+            "例如 live.bilibili.com/23612045\n\n"
+            "检测到有效房间号后浏览器会自动关闭。",
+            QMessageBox.Ok | QMessageBox.Cancel,
+        )
+        if ok != QMessageBox.Ok:
+            return
+
+        def on_room(room_id: int) -> None:
+            self._post_ui_task(self._apply_auto_room_id, room_id)
+            logging.getLogger(__name__).info("房间号获取成功: %s", room_id)
+
+        self._browser_sniff(
+            None,
+            "已打开浏览器，请进入目标直播间",
+            on_page_url=on_room,
+        )
 
     def auto_fetch_task_ids(self) -> None:
         ok = QMessageBox.question(
