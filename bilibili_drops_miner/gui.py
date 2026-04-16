@@ -51,27 +51,47 @@ class QueueLogHandler(logging.Handler):
 
 _BUTTON_STYLES: dict[str, str] = {
     "green": (
-        "QPushButton{background:#2ecc71;color:white;border:0;border-radius:4px;padding:6px 12px;}"
-        "QPushButton:hover{background:#27ae60;}"
+        "QPushButton{background:#22c55e;color:#ffffff;border:0;border-radius:6px;"
+        "padding:7px 16px;font-weight:600;}"
+        "QPushButton:hover{background:#16a34a;}"
+        "QPushButton:pressed{background:#15803d;}"
     ),
     "red": (
-        "QPushButton{background:#e74c3c;color:white;border:0;border-radius:4px;padding:6px 12px;}"
-        "QPushButton:hover{background:#c0392b;}"
+        "QPushButton{background:#ef4444;color:#ffffff;border:0;border-radius:6px;"
+        "padding:7px 16px;font-weight:600;}"
+        "QPushButton:hover{background:#dc2626;}"
+        "QPushButton:pressed{background:#b91c1c;}"
     ),
     "blue": (
-        "QPushButton{background:#3498db;color:white;border:0;border-radius:4px;padding:6px 12px;}"
-        "QPushButton:hover{background:#2980b9;}"
+        "QPushButton{background:#4f8cff;color:#ffffff;border:0;border-radius:6px;"
+        "padding:7px 16px;font-weight:600;}"
+        "QPushButton:hover{background:#3b73e6;}"
+        "QPushButton:pressed{background:#2e5fc4;}"
     ),
     "purple": (
-        "QPushButton{background:#9b59b6;color:white;border:0;border-radius:4px;padding:6px 12px;}"
-        "QPushButton:hover{background:#8e44ad;}"
+        "QPushButton{background:#a78bfa;color:#ffffff;border:0;border-radius:6px;"
+        "padding:7px 16px;font-weight:600;}"
+        "QPushButton:hover{background:#8b6ff0;}"
+        "QPushButton:pressed{background:#7057d6;}"
     ),
     "gray": (
-        "QPushButton{background:#95a5a6;color:white;border:0;border-radius:4px;padding:6px 12px;}"
-        "QPushButton:hover{background:#7f8c8d;}"
+        "QPushButton{background:#3a3f4b;color:#e6e7eb;border:0;border-radius:6px;"
+        "padding:7px 16px;font-weight:600;}"
+        "QPushButton:hover{background:#454b58;}"
+        "QPushButton:pressed{background:#2f343e;}"
     ),
-    "": "QPushButton{padding:6px 12px;}",
+    "": (
+        "QPushButton{background:#2f343e;color:#e6e7eb;border:1px solid #3a3f4b;"
+        "border-radius:6px;padding:7px 16px;font-weight:500;}"
+        "QPushButton:hover{background:#363b47;border-color:#4a5060;}"
+        "QPushButton:pressed{background:#272b34;}"
+    ),
 }
+
+
+_CARD_STYLE = (
+    "QFrame#card{background:#242832;border:1px solid #2f3440;border-radius:10px;}"
+)
 
 
 class MinerGUI(QMainWindow):
@@ -134,22 +154,23 @@ class MinerGUI(QMainWindow):
         central = QWidget(self)
         self.setCentralWidget(central)
         root_layout = QVBoxLayout(central)
-        root_layout.setContentsMargins(16, 16, 16, 16)
-        root_layout.setSpacing(8)
+        root_layout.setContentsMargins(18, 18, 18, 18)
+        root_layout.setSpacing(12)
 
         # ---- Config card ----
         config_card = QFrame()
         config_card.setObjectName("card")
-        config_card.setStyleSheet("QFrame#card{background:#2b2b2b;border-radius:8px;}")
+        config_card.setStyleSheet(_CARD_STYLE)
         config_layout = QVBoxLayout(config_card)
-        config_layout.setContentsMargins(16, 12, 16, 12)
-        config_layout.setSpacing(6)
+        config_layout.setContentsMargins(18, 14, 18, 14)
+        config_layout.setSpacing(8)
 
         title = QLabel("Bilibili 直播掉宝助手")
         title_font = QFont()
-        title_font.setPointSize(14)
+        title_font.setPointSize(15)
         title_font.setBold(True)
         title.setFont(title_font)
+        title.setStyleSheet("color:#f5f6f8;padding:2px 0 6px 0;")
         config_layout.addWidget(title)
 
         self.cookie_edit = self._make_line_edit("必填: SESSDATA=xxx; bili_jct=xxx; DedeUserID=xxx")
@@ -182,15 +203,17 @@ class MinerGUI(QMainWindow):
 
         num_row = QHBoxLayout()
         num_row.setSpacing(12)
-        num_row.addWidget(QLabel("线程数"))
-        num_row.addWidget(self.threads_edit)
-        num_row.addSpacing(8)
-        num_row.addWidget(QLabel("重连延迟(s)"))
-        num_row.addWidget(self.reconnect_edit)
-        num_row.addSpacing(8)
-        num_row.addWidget(QLabel("任务查询间隔(s)"))
-        num_row.addWidget(self.task_interval_edit)
-        num_row.addSpacing(12)
+        for text, widget in (
+            ("线程数", self.threads_edit),
+            ("重连延迟(s)", self.reconnect_edit),
+            ("任务查询间隔(s)", self.task_interval_edit),
+        ):
+            lbl = QLabel(text)
+            lbl.setStyleSheet("color:#9aa0a6;")
+            num_row.addWidget(lbl)
+            num_row.addWidget(widget)
+            num_row.addSpacing(6)
+        num_row.addSpacing(6)
         num_row.addWidget(self.verbose_check)
         num_row.addWidget(self.disable_task_notify_check)
         num_row.addStretch(1)
@@ -221,10 +244,10 @@ class MinerGUI(QMainWindow):
         # ---- Task progress card ----
         task_card = QFrame()
         task_card.setObjectName("card")
-        task_card.setStyleSheet("QFrame#card{background:#2b2b2b;border-radius:8px;}")
+        task_card.setStyleSheet(_CARD_STYLE)
         task_layout = QVBoxLayout(task_card)
-        task_layout.setContentsMargins(12, 8, 12, 8)
-        task_layout.setSpacing(4)
+        task_layout.setContentsMargins(18, 12, 18, 14)
+        task_layout.setSpacing(8)
 
         task_header = QHBoxLayout()
         task_title = QLabel("任务进度")
@@ -232,6 +255,7 @@ class MinerGUI(QMainWindow):
         tf.setPointSize(11)
         tf.setBold(True)
         task_title.setFont(tf)
+        task_title.setStyleSheet("color:#f5f6f8;")
         task_header.addWidget(task_title)
         task_header.addStretch(1)
         task_header.addWidget(self._make_button("手动刷新", "", self.refresh_tasks))
@@ -250,10 +274,10 @@ class MinerGUI(QMainWindow):
         # ---- Log card (collapsible, default collapsed) ----
         self.log_card = QFrame()
         self.log_card.setObjectName("card")
-        self.log_card.setStyleSheet("QFrame#card{background:#2b2b2b;border-radius:8px;}")
+        self.log_card.setStyleSheet(_CARD_STYLE)
         log_layout = QVBoxLayout(self.log_card)
-        log_layout.setContentsMargins(12, 8, 12, 8)
-        log_layout.setSpacing(4)
+        log_layout.setContentsMargins(18, 8, 18, 14)
+        log_layout.setSpacing(6)
 
         self._log_toggle_btn = QPushButton("▶ 运行日志")
         lf = QFont()
@@ -261,9 +285,10 @@ class MinerGUI(QMainWindow):
         lf.setBold(True)
         self._log_toggle_btn.setFont(lf)
         self._log_toggle_btn.setFlat(True)
+        self._log_toggle_btn.setCursor(Qt.PointingHandCursor)
         self._log_toggle_btn.setStyleSheet(
-            "QPushButton{text-align:left;padding:4px;border:0;}"
-            "QPushButton:hover{background:#3a3a3a;}"
+            "QPushButton{text-align:left;padding:6px 4px;border:0;background:transparent;color:#e6e7eb;}"
+            "QPushButton:hover{color:#4f8cff;}"
         )
         self._log_toggle_btn.clicked.connect(self._toggle_log)
         log_layout.addWidget(self._log_toggle_btn)
@@ -294,6 +319,7 @@ class MinerGUI(QMainWindow):
     def _make_button(self, text: str, color: str, slot) -> QPushButton:
         btn = QPushButton(text)
         btn.setStyleSheet(_BUTTON_STYLES.get(color, _BUTTON_STYLES[""]))
+        btn.setCursor(Qt.PointingHandCursor)
         btn.clicked.connect(slot)
         return btn
 
@@ -304,15 +330,16 @@ class MinerGUI(QMainWindow):
         extra_button: tuple[str, str, object] | None = None,
     ) -> QHBoxLayout:
         row = QHBoxLayout()
-        row.setSpacing(4)
+        row.setSpacing(8)
         lab = QLabel(label)
-        lab.setFixedWidth(80)
+        lab.setFixedWidth(72)
+        lab.setStyleSheet("color:#9aa0a6;")
         row.addWidget(lab)
         row.addWidget(editor, 1)
         if extra_button is not None:
             text, color, slot = extra_button
             b = self._make_button(text, color, slot)
-            b.setFixedWidth(90)
+            b.setFixedWidth(88)
             row.addWidget(b)
         return row
 
@@ -1309,13 +1336,84 @@ class MinerGUI(QMainWindow):
 
 def run_gui() -> int:
     app = QApplication.instance() or QApplication(sys.argv)
-    # Dark palette-ish default via stylesheet
+    app.setStyle("Fusion")
+    default_font = QFont("Segoe UI", 10)
+    # Fall back to Microsoft YaHei for CJK glyphs on Windows
+    default_font.setStyleStrategy(QFont.PreferAntialias)
+    app.setFont(default_font)
     app.setStyleSheet(
-        "QWidget{background:#1f1f1f;color:#e0e0e0;}"
-        "QLineEdit,QPlainTextEdit{background:#2b2b2b;color:#e0e0e0;border:1px solid #3a3a3a;border-radius:4px;padding:4px;}"
-        "QCheckBox{spacing:6px;}"
-        "QProgressBar{background:#2b2b2b;border:0;border-radius:3px;}"
-        "QProgressBar::chunk{background:#3498db;border-radius:3px;}"
+        """
+        QWidget { background: #1a1d23; color: #e6e7eb; }
+        QLabel { background: transparent; color: #e6e7eb; }
+        QToolTip { background: #2f3440; color: #e6e7eb; border: 1px solid #3a3f4b;
+                   padding: 4px 8px; border-radius: 4px; }
+
+        QLineEdit {
+            background: #2b2f3a; color: #e6e7eb;
+            border: 1px solid #2f3440; border-radius: 6px;
+            padding: 6px 10px; selection-background-color: #4f8cff;
+        }
+        QLineEdit:focus { border-color: #4f8cff; }
+        QLineEdit:disabled { color: #6b7280; background: #23262e; }
+
+        QPlainTextEdit {
+            background: #1f222a; color: #d8dae0;
+            border: 1px solid #2f3440; border-radius: 6px;
+            padding: 6px; selection-background-color: #4f8cff;
+        }
+
+        QCheckBox { background: transparent; spacing: 8px; color: #e6e7eb; }
+        QCheckBox::indicator {
+            width: 16px; height: 16px; border: 1px solid #3a3f4b;
+            border-radius: 4px; background: #2b2f3a;
+        }
+        QCheckBox::indicator:hover { border-color: #4f8cff; }
+        QCheckBox::indicator:checked {
+            background: #4f8cff; border-color: #4f8cff;
+            image: none;
+        }
+
+        QProgressBar {
+            background: #2b2f3a; border: 0; border-radius: 4px;
+            min-height: 6px; max-height: 6px;
+        }
+        QProgressBar::chunk {
+            background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                                        stop:0 #4f8cff, stop:1 #7aa7ff);
+            border-radius: 4px;
+        }
+
+        QScrollBar:vertical {
+            background: transparent; width: 10px; margin: 2px;
+        }
+        QScrollBar::handle:vertical {
+            background: #3a3f4b; border-radius: 4px; min-height: 24px;
+        }
+        QScrollBar::handle:vertical:hover { background: #4a5060; }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+            background: transparent; height: 0; border: 0;
+        }
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+            background: transparent;
+        }
+        QScrollBar:horizontal {
+            background: transparent; height: 10px; margin: 2px;
+        }
+        QScrollBar::handle:horizontal {
+            background: #3a3f4b; border-radius: 4px; min-width: 24px;
+        }
+        QScrollBar::handle:horizontal:hover { background: #4a5060; }
+        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+            background: transparent; width: 0; border: 0;
+        }
+
+        QMenu {
+            background: #242832; color: #e6e7eb;
+            border: 1px solid #2f3440; border-radius: 6px; padding: 4px;
+        }
+        QMenu::item { padding: 6px 18px; border-radius: 4px; }
+        QMenu::item:selected { background: #4f8cff; color: #ffffff; }
+        """
     )
     window = MinerGUI()
     window.show()
