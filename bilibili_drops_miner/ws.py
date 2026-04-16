@@ -196,11 +196,10 @@ class LiveRoomWorker:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                self._log_warning(
+                LOGGER.debug(
                     "直播间 %s 观看时长上报失败: %s",
                     self.room_id,
                     exc,
-                    primary_only=True,
                 )
                 session = None
                 wait_seconds = max(5, self.config.reconnect_delay_seconds)
@@ -259,7 +258,7 @@ class LiveRoomWorker:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                LOGGER.warning("查询任务进度失败: %s", exc)
+                LOGGER.debug("查询任务进度失败: %s", exc)
                 wait_seconds = max(10, self.config.reconnect_delay_seconds)
             try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=wait_seconds)

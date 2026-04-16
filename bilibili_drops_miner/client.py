@@ -165,9 +165,7 @@ class BilibiliClient:
     def update_cookie(self, cookie: str) -> None:
         cookie_map = parse_cookie(cookie)
         if "buvid3" not in cookie_map:
-            cookie_map["buvid3"] = self.cookie_map.get(
-                "buvid3", f"{uuid.uuid4()}infoc"
-            )
+            cookie_map["buvid3"] = self.cookie_map.get("buvid3", f"{uuid.uuid4()}infoc")
         self.cookie_map = cookie_map
         self.cookie_header = join_cookie(cookie_map)
         self.bili_jct = get_cookie_value(self.cookie_header, "bili_jct")
@@ -544,8 +542,13 @@ class BilibiliClient:
             raise ValueError("x25Kn 会话缺少 secret_key/secret_rule")
 
         next_seq = session.seq_id + 1
-        duration = max(1, int(session.heartbeat_interval))
         ts_ms = int(time.time() * 1000)
+        # 使用实际经过的秒数而非固定 heartbeat_interval。
+        # 单事件循环高并发时，timer 触发后协程可能在 ready queue 中等待数秒，
+        # 导致 ts/1000 - ets > heartbeat_interval，服务器 time check 失败。
+        # 改为动态计算：duration = ts/1000 - ets，始终与时间戳自洽。
+        actual_elapsed = ts_ms / 1000 - session.ets
+        duration = max(1, int(actual_elapsed))
         signature = self._build_x25kn_signature(
             parent_area_id=session.parent_area_id,
             area_id=session.area_id,
