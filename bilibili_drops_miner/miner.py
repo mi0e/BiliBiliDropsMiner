@@ -31,6 +31,21 @@ class BilibiliWatchTimeMiner:
         self._notifier = MultiPlatformNotifier(config.notify_urls)
         # all BilibiliClient instances currently alive; mutated only from event-loop thread
         self._clients: list[BilibiliClient] = []
+        # guarded shutdown policy: short graceful budget, then force-cancel.
+        self._graceful_shutdown_budget_seconds = 2.0
+        self._forced_shutdown_budget_seconds = 1.0
+        self._force_stop_requested = False
+
+    def _cancel_session_tasks(self) -> None:
+        for task in self._tasks:
+            if not task.done():
+                task.cancel()
+
+    def _request_force_stop(self) -> None:
+        self._force_stop_requested = True
+        if self._stop_event is not None:
+            self._stop_event.set()
+        self._cancel_session_tasks()
 
     # ------------------------------------------------------------------
     # internal helpers
@@ -112,12 +127,38 @@ class BilibiliWatchTimeMiner:
         finally:
             # Tear down in reverse order: stop the worker (closes WS + sets its
             # own stop-event), cancel its task, then close the HTTP client.
+            forced = self._force_stop_requested
+            stop_timeout = 0.8 if forced else 1.6
             if worker is not None:
-                await worker.stop()
+                try:
+                    await asyncio.wait_for(worker.stop(), timeout=stop_timeout)
+                except asyncio.TimeoutError:
+                    LOGGER.debug(
+                        "停止 worker 超时 room=%s session=%s",
+                        plan.room_id,
+                        plan.session_no,
+                    )
             if worker_task is not None:
                 worker_task.cancel()
-                await asyncio.gather(worker_task, return_exceptions=True)
-            await client.close()
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(worker_task, return_exceptions=True),
+                        timeout=stop_timeout,
+                    )
+                except asyncio.TimeoutError:
+                    LOGGER.debug(
+                        "等待 worker_task 退出超时 room=%s session=%s",
+                        plan.room_id,
+                        plan.session_no,
+                    )
+            try:
+                await asyncio.wait_for(client.close(), timeout=stop_timeout)
+            except asyncio.TimeoutError:
+                LOGGER.debug(
+                    "关闭 HTTP client 超时 room=%s session=%s",
+                    plan.room_id,
+                    plan.session_no,
+                )
             if client in self._clients:
                 self._clients.remove(client)
 
@@ -130,6 +171,7 @@ class BilibiliWatchTimeMiner:
         # it safely from the GUI thread via call_soon_threadsafe.
         self._loop = asyncio.get_running_loop()
         self._stop_event = asyncio.Event()
+        self._force_stop_requested = False
 
         # Login probe — one single HTTP call before any sessions start.
         uid, uname = await self._probe_login()
@@ -166,34 +208,89 @@ class BilibiliWatchTimeMiner:
             for i, plan in enumerate(plans, start=1)
         ]
         self._tasks = tasks
+        sessions_done_task = asyncio.gather(*tasks, return_exceptions=True)
+        stop_wait_task = asyncio.create_task(
+            self._stop_event.wait(),
+            name="stop-wait",
+        )
 
         try:
-            # Wait for all session tasks to finish. Each task parks on
-            # stop_event.wait() and will only exit once stop() is called or it
-            # crashes. return_exceptions=True ensures one bad session never
-            # brings down the others.
-            await asyncio.gather(*tasks, return_exceptions=True)
+            done, _ = await asyncio.wait(
+                {sessions_done_task, stop_wait_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            # stop requested: first give a short graceful budget.
+            if stop_wait_task in done and not sessions_done_task.done():
+                graceful_budget = (
+                    0.0
+                    if self._force_stop_requested
+                    else self._graceful_shutdown_budget_seconds
+                )
+                if graceful_budget > 0:
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.shield(sessions_done_task),
+                            timeout=graceful_budget,
+                        )
+                    except asyncio.TimeoutError:
+                        LOGGER.info(
+                            "优雅停止超时（%.1fs），切换为强制停止",
+                            graceful_budget,
+                        )
+                        self._request_force_stop()
+                else:
+                    self._request_force_stop()
+
+                if not sessions_done_task.done():
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.shield(sessions_done_task),
+                            timeout=self._forced_shutdown_budget_seconds,
+                        )
+                    except asyncio.TimeoutError:
+                        LOGGER.warning(
+                            "强制停止超时（%.1fs），将直接结束主循环等待",
+                            self._forced_shutdown_budget_seconds,
+                        )
+
+            # normal completion path.
+            if sessions_done_task in done:
+                await sessions_done_task
 
         except asyncio.CancelledError:
-            # Raised when KeyboardInterrupt reaches asyncio.run().
-            # Signal all tasks to stop, then wait for them.
-            self._stop_event.set()
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            self._request_force_stop()
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(sessions_done_task),
+                    timeout=self._forced_shutdown_budget_seconds,
+                )
+            except asyncio.TimeoutError:
+                LOGGER.warning("取消运行时等待任务退出超时")
             raise
 
         finally:
             # Guarantee the stop flag is set so any task still in its stagger
             # delay can exit cleanly.
             self._stop_event.set()
+            if not stop_wait_task.done():
+                stop_wait_task.cancel()
+                await asyncio.gather(stop_wait_task, return_exceptions=True)
 
             # Force-cancel anything that somehow survived.
             remaining = [t for t in tasks if not t.done()]
             if remaining:
-                for task in remaining:
-                    task.cancel()
-                await asyncio.gather(*remaining, return_exceptions=True)
+                self._request_force_stop()
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*remaining, return_exceptions=True),
+                        timeout=self._forced_shutdown_budget_seconds,
+                    )
+                except asyncio.TimeoutError:
+                    LOGGER.warning(
+                        "仍有 %s 个连接未在预算内退出",
+                        len([t for t in tasks if not t.done()]),
+                    )
 
             # Summarise shutdown result.
             still_alive = [t.get_name() for t in tasks if not t.done()]
@@ -210,6 +307,7 @@ class BilibiliWatchTimeMiner:
             self._clients.clear()
             self._loop = None
             self._stop_event = None
+            self._force_stop_requested = False
 
     # ------------------------------------------------------------------
     # public API
@@ -222,12 +320,15 @@ class BilibiliWatchTimeMiner:
         except KeyboardInterrupt:
             LOGGER.info("收到停止信号，正在停止...")
 
-    def stop(self) -> None:
+    def stop(self, *, force: bool = False) -> None:
         """Thread-safe: may be called from any thread (e.g. the GUI thread)."""
         loop = self._loop
         stop_event = self._stop_event
         if loop is not None and not loop.is_closed() and stop_event is not None:
-            loop.call_soon_threadsafe(stop_event.set)
+            if force:
+                loop.call_soon_threadsafe(self._request_force_stop)
+            else:
+                loop.call_soon_threadsafe(stop_event.set)
 
     def _apply_cookie_update(self, new_cookie: str) -> None:
         """Runs inside the event-loop thread — safe to touch self._clients."""

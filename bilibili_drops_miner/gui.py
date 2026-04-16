@@ -68,6 +68,8 @@ class MinerGUI:
         self._stopping_in_progress: bool = False
         self._stop_poll_started_at: float | None = None
         self._stop_timeout_warned: bool = False
+        self._stop_force_sent: bool = False
+        self._auto_force_stop_after_seconds: float = 2.0
 
         self._build_layout()
         self._install_logging()
@@ -355,6 +357,7 @@ class MinerGUI:
         self._stopping_in_progress = False
         self._stop_poll_started_at = None
         self._stop_timeout_warned = False
+        self._stop_force_sent = False
         if self.worker_thread and self.worker_thread.is_alive():
             messagebox.showinfo(
                 "运行中",
@@ -409,15 +412,22 @@ class MinerGUI:
             self._stopping_in_progress = False
             self._stop_poll_started_at = None
             self._stop_timeout_warned = False
+            self._stop_force_sent = False
             return
         if self._stopping_in_progress:
-            logger.info("正在停止，请稍候...")
+            if self.miner is not None and not self._stop_force_sent:
+                self._stop_force_sent = True
+                self.miner.stop(force=True)
+                logger.warning("已发送强制停止请求")
+            else:
+                logger.info("正在停止，请稍候...")
             return
         self._stopping_in_progress = True
         self._stop_poll_started_at = time.monotonic()
         self._stop_timeout_warned = False
+        self._stop_force_sent = False
         if self.miner is not None:
-            self.miner.stop()
+            self.miner.stop(force=False)
         logger.info("正在停止...")
         self._poll_worker_shutdown()
 
@@ -428,11 +438,23 @@ class MinerGUI:
             self._stopping_in_progress = False
             self._stop_poll_started_at = None
             self._stop_timeout_warned = False
+            self._stop_force_sent = False
             return
         if self.worker_thread.is_alive():
             if self._stop_poll_started_at is None:
                 self._stop_poll_started_at = time.monotonic()
             elapsed = time.monotonic() - self._stop_poll_started_at
+            if (
+                elapsed >= self._auto_force_stop_after_seconds
+                and not self._stop_force_sent
+                and self.miner is not None
+            ):
+                self._stop_force_sent = True
+                self.miner.stop(force=True)
+                logger.warning(
+                    "停止超过 %.1f 秒，已切换为强制停止",
+                    self._auto_force_stop_after_seconds,
+                )
             if elapsed >= 5 and not self._stop_timeout_warned:
                 logger.warning("停止超过 5 秒，后台线程仍在退出中")
                 self._stop_timeout_warned = True
@@ -445,6 +467,7 @@ class MinerGUI:
         self._stopping_in_progress = False
         self._stop_poll_started_at = None
         self._stop_timeout_warned = False
+        self._stop_force_sent = False
 
     def _start_progress_animation(self) -> None:
         self._progress_running = True
