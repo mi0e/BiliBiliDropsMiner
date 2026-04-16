@@ -36,10 +36,10 @@ class MinerGUI:
     def __init__(self, root: ctk.CTk) -> None:
         self.root = root
         self.root.title("Bilibili 直播掉宝助手")
-        self.root.geometry("980x630")
+        self.root.geometry("980x580")
         self.root.minsize(800, 500)
         self._size_expanded = "980x920"
-        self._size_collapsed = "980x630"
+        self._size_collapsed = "980x580"
 
         self.log_queue: "queue.Queue[str]" = queue.Queue()
         self.ui_task_queue: queue.Queue = queue.Queue()
@@ -70,10 +70,16 @@ class MinerGUI:
         self._stop_timeout_warned: bool = False
         self._stop_force_sent: bool = False
         self._auto_force_stop_after_seconds: float = 2.0
+        self._resizing_until: float = 0.0
 
         self._build_layout()
         self._install_logging()
         self._schedule_log_flush()
+        self.root.bind("<Configure>", self._on_root_configure, add="+")
+
+    def _on_root_configure(self, event) -> None:
+        if event.widget is self.root:
+            self._resizing_until = time.monotonic() + 0.15
 
     def _build_layout(self) -> None:
         # --- Config section ---
@@ -486,8 +492,21 @@ class MinerGUI:
         canvas = self._progress_canvas
         canvas.pack(fill="x", padx=16, pady=(0, 4))
 
+        canvas.delete("all")
+        self._progress_track_id = canvas.create_rectangle(
+            0, 1, 1, 3, fill="#333333", outline=""
+        )
+        self._progress_block_id = canvas.create_rectangle(
+            0, 0, 1, 4, fill="#3498db", outline=""
+        )
+        self._progress_last_w = 0
+
         def _tick():
             if not self._progress_running:
+                return
+            w = canvas.winfo_width()
+            if w < 2:
+                self.root.after(20, _tick)
                 return
             self._progress_pos += 0.004 * self._progress_dir
             if self._progress_pos >= 1.0:
@@ -497,25 +516,16 @@ class MinerGUI:
                 self._progress_pos = 0.0
                 self._progress_dir = 1
 
-            w = canvas.winfo_width()
-            if w < 2:
-                self.root.after(20, _tick)
-                return
             block_w = max(40, w // 6)
             x = self._progress_pos * (w - block_w)
-            canvas.delete("all")
-            # track
-            canvas.create_rectangle(0, 1, w, 3, fill="#333333", outline="")
-            # sliding block
-            canvas.create_rectangle(
-                x,
-                0,
-                x + block_w,
-                4,
-                fill="#3498db",
-                outline="",
-            )
-            self.root.after(8, _tick)
+            if w != self._progress_last_w:
+                canvas.coords(self._progress_track_id, 0, 1, w, 3)
+                self._progress_last_w = w
+            canvas.coords(self._progress_block_id, x, 0, x + block_w, 4)
+            if time.monotonic() < self._resizing_until:
+                self.root.after(100, _tick)
+            else:
+                self.root.after(8, _tick)
 
         _tick()
 
