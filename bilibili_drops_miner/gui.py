@@ -102,10 +102,10 @@ class MinerGUI(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Bilibili 直播掉宝助手")
-        self.resize(980, 580)
-        self.setMinimumSize(800, 500)
-        self._size_expanded = (980, 920)
-        self._size_collapsed = (980, 580)
+        self.resize(1000, 750)
+        self.setMinimumSize(1000, 750)
+        self._size_expanded = (1000, 920)
+        self._size_collapsed = (1000, 750)
 
         self.log_queue: "queue.Queue[str]" = queue.Queue()
         self.worker_thread: threading.Thread | None = None
