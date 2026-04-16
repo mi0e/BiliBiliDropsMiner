@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -260,6 +261,40 @@ class BilibiliClient:
             "Cookie": self.cookie_header,
         }
 
+    async def _request_with_transient_retry(
+        self,
+        request_coro,
+        *,
+        method: str,
+        url: str,
+    ) -> httpx.Response:
+        # 高并发时，x25Kn/live API 偶发 ConnectTimeout/ReadTimeout。
+        # 对这类瞬时网络异常做短退避重试，避免单次抖动就打断会话。
+        delays = (0.35, 0.8)
+        attempt_total = len(delays) + 1
+        for attempt in range(1, attempt_total + 1):
+            try:
+                return await request_coro()
+            except (
+                httpx.ConnectTimeout,
+                httpx.ReadTimeout,
+                httpx.ConnectError,
+                httpx.RemoteProtocolError,
+            ) as exc:
+                if attempt >= attempt_total:
+                    raise
+                delay = delays[attempt - 1]
+                LOGGER.debug(
+                    "%s %s 网络瞬时异常(%s/%s): %s，%.2fs 后重试",
+                    method,
+                    url,
+                    attempt,
+                    attempt_total,
+                    type(exc).__name__,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+
     async def _signed_get_json(
         self,
         url: str,
@@ -273,11 +308,15 @@ class BilibiliClient:
         retries = 2 if retry_on_wbi_miss else 1
         for retry in range(retries):
             signed_params = await self.sign_wbi(params)
-            response = await self._http.get(
-                url,
-                params=signed_params,
-                headers=headers,
-                follow_redirects=follow_redirects,
+            response = await self._request_with_transient_retry(
+                lambda: self._http.get(
+                    url,
+                    params=signed_params,
+                    headers=headers,
+                    follow_redirects=follow_redirects,
+                ),
+                method="GET",
+                url=url,
             )
             response.raise_for_status()
             payload = response.json()
@@ -300,11 +339,15 @@ class BilibiliClient:
         retries = 2 if retry_on_wbi_miss else 1
         for retry in range(retries):
             signed_params = await self.sign_wbi(params)
-            response = await self._http.post(
-                url,
-                params=signed_params,
-                json=body,
-                headers=headers,
+            response = await self._request_with_transient_retry(
+                lambda: self._http.post(
+                    url,
+                    params=signed_params,
+                    json=body,
+                    headers=headers,
+                ),
+                method="POST",
+                url=url,
             )
             response.raise_for_status()
             payload = response.json()
@@ -327,11 +370,15 @@ class BilibiliClient:
         retries = 2 if retry_on_wbi_miss else 1
         for retry in range(retries):
             signed_params = await self.sign_wbi(params)
-            response = await self._http.post(
-                url,
-                params=signed_params,
-                headers=headers,
-                follow_redirects=follow_redirects,
+            response = await self._request_with_transient_retry(
+                lambda: self._http.post(
+                    url,
+                    params=signed_params,
+                    headers=headers,
+                    follow_redirects=follow_redirects,
+                ),
+                method="POST",
+                url=url,
             )
             response.raise_for_status()
             payload = response.json()
@@ -553,20 +600,20 @@ class BilibiliClient:
             raise ValueError("x25Kn 会话缺少 secret_key/secret_rule")
 
         next_seq = session.seq_id + 1
+        expected_interval = max(1, int(session.heartbeat_interval))
+        duration_used = expected_interval
         ts_ms = int(time.time() * 1000)
-        # 使用实际经过的秒数而非固定 heartbeat_interval。
-        # 单事件循环高并发时，timer 触发后协程可能在 ready queue 中等待数秒，
-        # 导致 ts/1000 - ets > heartbeat_interval，服务器 time check 失败。
-        # 改为动态计算：duration = ts/1000 - ets，始终与时间戳自洽。
-        actual_elapsed = ts_ms / 1000 - session.ets
-        duration = max(1, int(actual_elapsed))
+        actual_elapsed = max(1, int(ts_ms / 1000 - session.ets))
+        # 回退到老版本语义：固定心跳间隔上报，避免双路径重试放大抖动。
+        # actual_elapsed 仅用于失败日志定位。
+
         signature = self._build_x25kn_signature(
             parent_area_id=session.parent_area_id,
             area_id=session.area_id,
             seq_id=next_seq,
             room_id=session.room_id,
             ets=session.ets,
-            duration=duration,
+            duration=duration_used,
             ts_ms=ts_ms,
             secret_key=session.secret_key,
             secret_rule=session.secret_rule,
@@ -581,13 +628,14 @@ class BilibiliClient:
             "ruid": session.ruid,
             "ets": session.ets,
             "benchmark": session.secret_key,
-            "time": duration,
+            "time": duration_used,
             "ts": ts_ms,
             "trackid": -99998,
             "ua": self.user_agent,
             "web_location": "444.8",
             "csrf": self.bili_jct,
         }
+
         payload = await self._signed_post_query_json(
             "https://live-trace.bilibili.com/xlive/data-interface/v1/x25Kn/X",
             params,
@@ -595,9 +643,12 @@ class BilibiliClient:
             follow_redirects=True,
             retry_on_wbi_miss=True,
         )
+
         if payload.get("code") != 0:
             raise ValueError(
-                f"x25Kn/X 失败 room_id={session.room_id}: {payload.get('message')}"
+                "x25Kn/X 失败 "
+                f"room_id={session.room_id}: {payload.get('message')} "
+                f"(duration={duration_used}, expected={expected_interval}, elapsed={actual_elapsed})"
             )
 
         data = payload.get("data") or {}

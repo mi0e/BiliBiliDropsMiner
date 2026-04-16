@@ -58,6 +58,7 @@ class MinerGUI:
         self.notify_urls_var = ctk.StringVar()
         self.verbose_var = ctk.BooleanVar(value=False)
         self.disable_web_heartbeat_var = ctk.BooleanVar(value=False)
+        self.x25kn_only_var = ctk.BooleanVar(value=False)
         self.disable_task_notify_var = ctk.BooleanVar(value=False)
 
         self._last_verbose: bool | None = None
@@ -170,6 +171,12 @@ class MinerGUI:
             toggle_frame,
             text="禁用 x25Kn 心跳",
             variable=self.disable_web_heartbeat_var,
+            width=40,
+        ).pack(side="left", padx=(0, 16))
+        ctk.CTkSwitch(
+            toggle_frame,
+            text="x25Kn-only（不连WS）",
+            variable=self.x25kn_only_var,
             width=40,
         ).pack(side="left", padx=(0, 16))
         ctk.CTkSwitch(
@@ -369,6 +376,7 @@ class MinerGUI:
             heartbeat_interval_seconds=int(self.heartbeat_var.get().strip() or "30"),
             reconnect_delay_seconds=int(self.reconnect_var.get().strip() or "8"),
             enable_web_heartbeat=not self.disable_web_heartbeat_var.get(),
+            x25kn_only_mode=self.x25kn_only_var.get(),
             task_ids=parse_task_ids(self.task_ids_var.get().strip()),
             task_query_interval_seconds=int(
                 self.task_interval_var.get().strip() or "30"
@@ -1231,6 +1239,7 @@ class MinerGUI:
             pass
 
         config.enable_web_heartbeat = not self.disable_web_heartbeat_var.get()
+        config.x25kn_only_mode = self.x25kn_only_var.get()
         config.notify_on_task_complete = not self.disable_task_notify_var.get()
 
         verbose = self.verbose_var.get()
@@ -1281,6 +1290,7 @@ class MinerGUI:
             self.disable_web_heartbeat_var.set(
                 not bool(data.get("enable_web_heartbeat", True))
             )
+            self.x25kn_only_var.set(bool(data.get("x25kn_only_mode", False)))
             self.disable_task_notify_var.set(
                 not bool(data.get("notify_on_task_complete", True))
             )
@@ -1309,6 +1319,7 @@ class MinerGUI:
                 "heartbeat_interval_seconds": config.heartbeat_interval_seconds,
                 "reconnect_delay_seconds": config.reconnect_delay_seconds,
                 "enable_web_heartbeat": config.enable_web_heartbeat,
+                "x25kn_only_mode": config.x25kn_only_mode,
                 "task_ids": config.task_ids,
                 "task_query_interval_seconds": config.task_query_interval_seconds,
                 "notify_urls": config.notify_urls,

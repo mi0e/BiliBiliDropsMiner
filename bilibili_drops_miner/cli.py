@@ -29,6 +29,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Disable x25Kn business heartbeat",
     )
     parser.add_argument(
+        "--x25kn-only",
+        action="store_true",
+        help="Run x25Kn heartbeat/task monitor without websocket connection",
+    )
+    parser.add_argument(
         "--task-ids", default="", help="Task ids for progress monitoring"
     )
     parser.add_argument(
@@ -83,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
             heartbeat_interval_seconds=args.heartbeat_interval,
             reconnect_delay_seconds=args.reconnect_delay,
             enable_web_heartbeat=not args.disable_web_heartbeat,
+            x25kn_only_mode=args.x25kn_only,
             task_ids=task_ids,
             task_query_interval_seconds=args.task_interval,
             notify_urls=notify_urls,

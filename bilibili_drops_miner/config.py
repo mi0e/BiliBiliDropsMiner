@@ -11,6 +11,7 @@ class MinerConfig:
     heartbeat_interval_seconds: int = 30
     reconnect_delay_seconds: int = 8
     enable_web_heartbeat: bool = True
+    x25kn_only_mode: bool = False
     task_ids: list[str] = field(default_factory=list)
     task_query_interval_seconds: int = 30
     notify_urls: list[str] = field(default_factory=list)
@@ -31,3 +32,5 @@ class MinerConfig:
             raise ValueError("reconnect_delay_seconds 必须大于 0")
         if self.task_query_interval_seconds <= 0:
             raise ValueError("task_query_interval_seconds 必须大于 0")
+        if self.x25kn_only_mode and not self.enable_web_heartbeat:
+            raise ValueError("x25kn_only_mode 开启时不能禁用 x25Kn 心跳")

@@ -78,22 +78,72 @@ class LiveRoomWorker:
     async def run_forever(self) -> None:
         while not self._stop_event.is_set():
             try:
-                conf = await self.client.get_danmu_server(self.room_id)
-                LOGGER.debug("%s danmu server fetched host=%s", self._ctx, conf.host)
-                await self._run_once(conf)
+                if self.config.x25kn_only_mode:
+                    self._log_info(
+                        "直播间 %s 已进入 x25Kn-only 模式（不连接 WS）",
+                        self.room_id,
+                        primary_only=True,
+                    )
+                    await self._run_x25kn_only_once()
+                else:
+                    conf = await self.client.get_danmu_server(self.room_id)
+                    LOGGER.debug("%s danmu server fetched host=%s", self._ctx, conf.host)
+                    await self._run_once(conf)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                self._log_warning(
-                    "直播间 %s 连接断开: %s",
-                    self.room_id,
-                    exc,
-                    primary_only=True,
-                )
+                if self.config.x25kn_only_mode:
+                    self._log_warning(
+                        "直播间 %s x25Kn-only 运行异常: %s",
+                        self.room_id,
+                        exc,
+                        primary_only=True,
+                    )
+                else:
+                    self._log_warning(
+                        "直播间 %s 连接断开: %s",
+                        self.room_id,
+                        exc,
+                        primary_only=True,
+                    )
             if not self._stop_event.is_set():
                 await asyncio.sleep(self.config.reconnect_delay_seconds)
                 if self._stop_event.is_set():
                     return
+
+    async def _run_x25kn_only_once(self) -> None:
+        trace_heartbeat_task = asyncio.create_task(self._trace_heartbeat_loop())
+        task_monitor_task = (
+            asyncio.create_task(self._task_monitor_loop()) if self.primary_session else None
+        )
+        stop_wait_task = asyncio.create_task(self._stop_event.wait())
+
+        tasks: list[asyncio.Task[Any]] = [trace_heartbeat_task, stop_wait_task]
+        if task_monitor_task is not None:
+            tasks.append(task_monitor_task)
+
+        try:
+            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+
+            if stop_wait_task in done:
+                return
+
+            for task in done:
+                if task is stop_wait_task:
+                    continue
+                if task.cancelled():
+                    continue
+                exc = task.exception()
+                if exc is not None:
+                    raise exc
+
+            raise RuntimeError("x25Kn-only 子任务意外退出")
+
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _run_once(self, conf: DanmuServerConf) -> None:
         auth_payload = json.dumps(
@@ -196,10 +246,13 @@ class LiveRoomWorker:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                LOGGER.debug(
-                    "直播间 %s 观看时长上报失败: %s",
+                detail = str(exc).strip() or repr(exc)
+                self._log_warning(
+                    "直播间 %s 观看时长上报失败[%s]: %s",
                     self.room_id,
-                    exc,
+                    type(exc).__name__,
+                    detail,
+                    primary_only=True,
                 )
                 session = None
                 wait_seconds = max(5, self.config.reconnect_delay_seconds)
