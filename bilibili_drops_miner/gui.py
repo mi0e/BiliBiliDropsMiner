@@ -162,8 +162,8 @@ class MinerGUI(QMainWindow):
         config_card.setObjectName("card")
         config_card.setStyleSheet(_CARD_STYLE)
         config_layout = QVBoxLayout(config_card)
-        config_layout.setContentsMargins(18, 14, 18, 14)
-        config_layout.setSpacing(8)
+        config_layout.setContentsMargins(18, 16, 18, 16)
+        config_layout.setSpacing(12)
 
         title = QLabel("Bilibili 直播掉宝助手")
         title_font = QFont()
