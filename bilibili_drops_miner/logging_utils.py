@@ -82,5 +82,5 @@ def setup_logging(
 
     app_level = logging.DEBUG if verbose else logging.INFO
     logging.getLogger("bilibili_miner").setLevel(app_level)
-    for logger_name in ("httpx", "httpcore", "websockets", "asyncio"):
+    for logger_name in ("httpx", "httpcore", "asyncio"):
         logging.getLogger(logger_name).setLevel(logging.WARNING)

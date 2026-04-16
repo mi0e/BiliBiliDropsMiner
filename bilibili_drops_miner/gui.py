@@ -51,14 +51,11 @@ class MinerGUI:
         self.cookie_var = ctk.StringVar()
         self.rooms_var = ctk.StringVar(value="23612045")
         self.threads_var = ctk.StringVar(value="1")
-        self.heartbeat_var = ctk.StringVar(value="30")
         self.reconnect_var = ctk.StringVar(value="8")
         self.task_ids_var = ctk.StringVar()
         self.task_interval_var = ctk.StringVar(value="30")
         self.notify_urls_var = ctk.StringVar()
         self.verbose_var = ctk.BooleanVar(value=False)
-        self.disable_web_heartbeat_var = ctk.BooleanVar(value=False)
-        self.x25kn_only_var = ctk.BooleanVar(value=False)
         self.disable_task_notify_var = ctk.BooleanVar(value=False)
 
         self._last_verbose: bool | None = None
@@ -148,39 +145,21 @@ class MinerGUI:
         num_frame.pack(fill="x", padx=16, pady=(4, 4))
 
         self._add_small_entry(num_frame, 0, "线程数", self.threads_var)
-        self._add_small_entry(num_frame, 1, "WS 心跳(s)", self.heartbeat_var)
-        self._add_small_entry(num_frame, 2, "重连延迟(s)", self.reconnect_var)
+        self._add_small_entry(num_frame, 1, "重连延迟(s)", self.reconnect_var)
         self._add_small_entry(
             num_frame,
-            3,
+            2,
             "任务查询间隔(s)",
             self.task_interval_var,
         )
-
-        # Toggles
-        toggle_frame = ctk.CTkFrame(config_frame, fg_color="transparent")
-        toggle_frame.pack(fill="x", padx=16, pady=(4, 8))
-
         ctk.CTkSwitch(
-            toggle_frame,
+            num_frame,
             text="详细日志",
             variable=self.verbose_var,
             width=40,
-        ).pack(side="left", padx=(0, 16))
+        ).pack(side="left", padx=(8, 16))
         ctk.CTkSwitch(
-            toggle_frame,
-            text="禁用 x25Kn 心跳",
-            variable=self.disable_web_heartbeat_var,
-            width=40,
-        ).pack(side="left", padx=(0, 16))
-        ctk.CTkSwitch(
-            toggle_frame,
-            text="x25Kn-only（不连WS）",
-            variable=self.x25kn_only_var,
-            width=40,
-        ).pack(side="left", padx=(0, 16))
-        ctk.CTkSwitch(
-            toggle_frame,
+            num_frame,
             text="禁用任务完成通知",
             variable=self.disable_task_notify_var,
             width=40,
@@ -373,10 +352,8 @@ class MinerGUI:
             cookie=self.cookie_var.get().strip(),
             room_ids=parse_room_ids(self.rooms_var.get().strip()),
             thread_count=int(self.threads_var.get().strip() or "1"),
-            heartbeat_interval_seconds=int(self.heartbeat_var.get().strip() or "30"),
             reconnect_delay_seconds=int(self.reconnect_var.get().strip() or "8"),
-            enable_web_heartbeat=not self.disable_web_heartbeat_var.get(),
-            x25kn_only_mode=self.x25kn_only_var.get(),
+            enable_web_heartbeat=True,
             task_ids=parse_task_ids(self.task_ids_var.get().strip()),
             task_query_interval_seconds=int(
                 self.task_interval_var.get().strip() or "30"
@@ -1220,12 +1197,6 @@ class MinerGUI:
         config = self.miner.config
 
         try:
-            val = int(self.heartbeat_var.get().strip() or "30")
-            if val > 0:
-                config.heartbeat_interval_seconds = val
-        except ValueError:
-            pass
-        try:
             val = int(self.reconnect_var.get().strip() or "8")
             if val > 0:
                 config.reconnect_delay_seconds = val
@@ -1238,8 +1209,6 @@ class MinerGUI:
         except ValueError:
             pass
 
-        config.enable_web_heartbeat = not self.disable_web_heartbeat_var.get()
-        config.x25kn_only_mode = self.x25kn_only_var.get()
         config.notify_on_task_complete = not self.disable_task_notify_var.get()
 
         verbose = self.verbose_var.get()
@@ -1280,17 +1249,12 @@ class MinerGUI:
             self.cookie_var.set(str(data.get("cookie", "")))
             self.rooms_var.set(",".join(str(x) for x in data.get("room_ids", [])))
             self.threads_var.set(str(data.get("thread_count", 1)))
-            self.heartbeat_var.set(str(data.get("heartbeat_interval_seconds", 30)))
             self.reconnect_var.set(str(data.get("reconnect_delay_seconds", 8)))
             self.task_ids_var.set(",".join(str(x) for x in data.get("task_ids", [])))
             self.task_interval_var.set(str(data.get("task_query_interval_seconds", 30)))
             self.notify_urls_var.set(
                 ",".join(str(x) for x in data.get("notify_urls", []))
             )
-            self.disable_web_heartbeat_var.set(
-                not bool(data.get("enable_web_heartbeat", True))
-            )
-            self.x25kn_only_var.set(bool(data.get("x25kn_only_mode", False)))
             self.disable_task_notify_var.set(
                 not bool(data.get("notify_on_task_complete", True))
             )
@@ -1316,10 +1280,8 @@ class MinerGUI:
                 "cookie": config.cookie,
                 "room_ids": config.room_ids,
                 "thread_count": config.thread_count,
-                "heartbeat_interval_seconds": config.heartbeat_interval_seconds,
                 "reconnect_delay_seconds": config.reconnect_delay_seconds,
                 "enable_web_heartbeat": config.enable_web_heartbeat,
-                "x25kn_only_mode": config.x25kn_only_mode,
                 "task_ids": config.task_ids,
                 "task_query_interval_seconds": config.task_query_interval_seconds,
                 "notify_urls": config.notify_urls,

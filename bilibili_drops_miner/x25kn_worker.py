@@ -1,16 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import struct
 from typing import Any
-
-import websockets
 
 from bilibili_drops_miner.client import (
     BilibiliClient,
-    DanmuServerConf,
     LiveTraceSession,
     TaskProgress,
 )
@@ -18,17 +13,9 @@ from bilibili_drops_miner.config import MinerConfig
 from bilibili_drops_miner.notifier import MultiPlatformNotifier
 
 LOGGER = logging.getLogger(__name__)
-HEADER = struct.Struct(">IHHII")
 
 
-def _build_packet(
-    payload: bytes, operation: int, version: int = 1, sequence: int = 1
-) -> bytes:
-    packet_len = 16 + len(payload)
-    return HEADER.pack(packet_len, 16, version, operation, sequence) + payload
-
-
-class LiveRoomWorker:
+class X25KnWorker:
     def __init__(
         self,
         client: BilibiliClient,
@@ -38,6 +25,7 @@ class LiveRoomWorker:
         room_id: int,
         session_id: str = "",
         primary_session: bool = True,
+        stop_event: asyncio.Event | None = None,
     ) -> None:
         self.client = client
         self.notifier = notifier
@@ -46,8 +34,7 @@ class LiveRoomWorker:
         self.room_id = room_id
         self.session_id = session_id
         self.primary_session = primary_session
-        self._stop_event = asyncio.Event()
-        self._ws: Any | None = None
+        self._stop_event = stop_event or asyncio.Event()
 
     @property
     def _ctx(self) -> str:
@@ -71,47 +58,26 @@ class LiveRoomWorker:
 
     async def stop(self) -> None:
         self._stop_event.set()
-        if self._ws is not None:
-            await self._ws.close()
-            self._ws = None
 
     async def run_forever(self) -> None:
         while not self._stop_event.is_set():
             try:
-                if self.config.x25kn_only_mode:
-                    self._log_info(
-                        "直播间 %s 已进入 x25Kn-only 模式（不连接 WS）",
-                        self.room_id,
-                        primary_only=True,
-                    )
-                    await self._run_x25kn_only_once()
-                else:
-                    conf = await self.client.get_danmu_server(self.room_id)
-                    LOGGER.debug("%s danmu server fetched host=%s", self._ctx, conf.host)
-                    await self._run_once(conf)
+                await self._run_once()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                if self.config.x25kn_only_mode:
-                    self._log_warning(
-                        "直播间 %s x25Kn-only 运行异常: %s",
-                        self.room_id,
-                        exc,
-                        primary_only=True,
-                    )
-                else:
-                    self._log_warning(
-                        "直播间 %s 连接断开: %s",
-                        self.room_id,
-                        exc,
-                        primary_only=True,
-                    )
+                self._log_warning(
+                    "直播间 %s x25Kn 运行异常: %s",
+                    self.room_id,
+                    exc,
+                    primary_only=True,
+                )
             if not self._stop_event.is_set():
                 await asyncio.sleep(self.config.reconnect_delay_seconds)
                 if self._stop_event.is_set():
                     return
 
-    async def _run_x25kn_only_once(self) -> None:
+    async def _run_once(self) -> None:
         trace_heartbeat_task = asyncio.create_task(self._trace_heartbeat_loop())
         task_monitor_task = (
             asyncio.create_task(self._task_monitor_loop()) if self.primary_session else None
@@ -137,80 +103,13 @@ class LiveRoomWorker:
                 if exc is not None:
                     raise exc
 
-            raise RuntimeError("x25Kn-only 子任务意外退出")
+            raise RuntimeError("x25Kn 子任务意外退出")
 
         finally:
             for task in tasks:
                 if not task.done():
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
-
-    async def _run_once(self, conf: DanmuServerConf) -> None:
-        auth_payload = json.dumps(
-            {
-                "uid": self.uid,
-                "roomid": conf.room_id,
-                "protover": 3,
-                "platform": "web",
-                "clientver": "1.18.6",
-                "type": 2,
-                "key": conf.token,
-            },
-            separators=(",", ":"),
-        ).encode("utf-8")
-        uri = f"wss://{conf.host}:{conf.wss_port}/sub"
-        async with websockets.connect(
-            uri, ping_interval=None, max_size=4 * 1024 * 1024
-        ) as ws:
-            self._ws = ws
-            self._log_info("直播间 %s 已连接", self.room_id, primary_only=True)
-            await ws.send(_build_packet(auth_payload, operation=7, version=1))
-
-            heartbeat_task = asyncio.create_task(self._heartbeat_loop(ws))
-            trace_heartbeat_task = asyncio.create_task(self._trace_heartbeat_loop())
-            task_monitor_task = (
-                asyncio.create_task(self._task_monitor_loop())
-                if self.primary_session
-                else None
-            )
-
-            try:
-                # 只消费服务器推送的消息以维持 TCP 接收缓冲区正常，不做任何解析。
-                # 掉宝依赖 WS 心跳（operation=2）+ x25Kn HTTP 心跳，无需处理弹幕/礼物等事件。
-                async for _ in ws:
-                    if self._stop_event.is_set():
-                        return
-            except websockets.exceptions.ConnectionClosed:
-                if self._stop_event.is_set():
-                    return
-                raise
-            finally:
-                self._ws = None
-                heartbeat_task.cancel()
-                trace_heartbeat_task.cancel()
-                tasks = [heartbeat_task, trace_heartbeat_task]
-                if task_monitor_task is not None:
-                    task_monitor_task.cancel()
-                    tasks.append(task_monitor_task)
-                await asyncio.gather(*tasks, return_exceptions=True)
-
-    async def _heartbeat_loop(self, ws: Any) -> None:
-        packet = _build_packet(payload=b"", operation=2, version=1)
-        while not self._stop_event.is_set():
-            await ws.send(packet)
-            LOGGER.debug(
-                "%s sent websocket heartbeat interval=%ss",
-                self._ctx,
-                self.config.heartbeat_interval_seconds,
-            )
-            try:
-                await asyncio.wait_for(
-                    self._stop_event.wait(),
-                    timeout=self.config.heartbeat_interval_seconds,
-                )
-                return
-            except asyncio.TimeoutError:
-                pass
 
     async def _trace_heartbeat_loop(self) -> None:
         session: LiveTraceSession | None = None

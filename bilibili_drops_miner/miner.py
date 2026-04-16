@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from bilibili_drops_miner.client import BilibiliClient
 from bilibili_drops_miner.config import MinerConfig
 from bilibili_drops_miner.notifier import MultiPlatformNotifier
-from bilibili_drops_miner.ws import LiveRoomWorker
+from bilibili_drops_miner.x25kn_worker import X25KnWorker
 
 LOGGER = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ class BilibiliWatchTimeMiner:
         with self._clients_lock:
             self._clients.append(client)
 
-        worker: LiveRoomWorker | None = None
+        worker: X25KnWorker | None = None
         task: asyncio.Task[None] | None = None
         try:
             if self._uid is None:
@@ -66,7 +66,7 @@ class BilibiliWatchTimeMiner:
                 self._uid = uid or 0
             runtime_uid = self._uid or 0
 
-            worker = LiveRoomWorker(
+            worker = X25KnWorker(
                 client=client,
                 notifier=self._notifier,
                 config=self.config,
@@ -77,7 +77,7 @@ class BilibiliWatchTimeMiner:
             )
             task = asyncio.create_task(
                 worker.run_forever(),
-                name=f"ws-{plan.room_id}-s{plan.session_no}",
+                name=f"x25kn-{plan.room_id}-s{plan.session_no}",
             )
             LOGGER.info("直播间 %s 连接 #%s 已启动", plan.room_id, plan.session_no)
 
