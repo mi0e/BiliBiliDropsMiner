@@ -616,6 +616,30 @@ class MinerGUI:
             ]
         return any(os.path.exists(p) for p in paths)
 
+    @staticmethod
+    def _extract_room_id_from_live_url(text: str) -> int | None:
+        if not text:
+            return None
+        for pattern in (
+            r"https?://live\.bilibili\.com/blanc/(\d+)",
+            r"https?://live\.bilibili\.com/(\d+)",
+            r"live\.bilibili\.com/blanc/(\d+)",
+            r"live\.bilibili\.com/(\d+)",
+        ):
+            match = re.search(pattern, text)
+            if not match:
+                continue
+            try:
+                room_id = int(match.group(1))
+            except Exception:
+                continue
+            if room_id > 0:
+                return room_id
+        return None
+
+    def _apply_auto_room_id(self, room_id: int) -> None:
+        self.rooms_var.set(str(room_id))
+
     def _browser_sniff(
         self,
         url_keyword: str | None,
@@ -710,7 +734,7 @@ class MinerGUI:
                             "  var url=(typeof arguments[0]==='string')?arguments[0]:arguments[0].url;\n"
                             "  if(url.indexOf('" + (url_keyword or "") + "')!==-1){\n"
                             "    try{var d=await resp.clone().json();\n"
-                            "      window.postMessage({type:'__bili_sniff__',payload:{url:url,data:d}},'*');\n"
+                            "      window.postMessage({type:'__bili_sniff__',payload:{url:url,data:d,page_url:window.location.href}},'*');\n"
                             "    }catch(e){}\n"
                             "  }\n"
                             "  return resp;\n"
@@ -726,7 +750,7 @@ class MinerGUI:
                             + (url_keyword or "")
                             + "')!==-1){\n"
                             "      try{window.postMessage({type:'__bili_sniff__',\n"
-                            "        payload:{url:self.__url,data:JSON.parse(self.responseText)}},'*');\n"
+                            "        payload:{url:self.__url,data:JSON.parse(self.responseText),page_url:window.location.href}},'*');\n"
                             "      }catch(e){}\n"
                             "    }\n"
                             "  });\n"
@@ -825,7 +849,7 @@ class MinerGUI:
                         "        if (url.indexOf(kw) !== -1) {\n"
                         "          try {\n"
                         "            var d = await resp.clone().json();\n"
-                        "            window.postMessage({type: '__bili_sniff__', payload: {url: url, data: d}}, '*');\n"
+                        "            window.postMessage({type: '__bili_sniff__', payload: {url: url, data: d, page_url: window.location.href}}, '*');\n"
                         "          } catch(e) {}\n"
                         "        }\n"
                         "        return resp;\n"
@@ -841,7 +865,7 @@ class MinerGUI:
                         "        this.addEventListener('load', function() {\n"
                         "          if (self.__url && self.__url.indexOf(kw) !== -1) {\n"
                         "            try {\n"
-                        "              window.postMessage({type: '__bili_sniff__', payload: {url: self.__url, data: JSON.parse(self.responseText)}}, '*');\n"
+                        "              window.postMessage({type: '__bili_sniff__', payload: {url: self.__url, data: JSON.parse(self.responseText), page_url: window.location.href}}, '*');\n"
                         "            } catch(e) {}\n"
                         "          }\n"
                         "        });\n"
@@ -997,7 +1021,7 @@ class MinerGUI:
                                 last_cookie_count = len(cookie_captured)
 
                     if need_net and not net_done and net_captured:
-                        on_network_match(net_captured[0]["data"])
+                        on_network_match(net_captured[0])
                         net_done = True
 
                     if (not need_cookie or cookie_done) and (not need_net or net_done):
@@ -1041,14 +1065,27 @@ class MinerGUI:
         ok = messagebox.askokcancel(
             "自动获取任务ID",
             "点击确定后会打开浏览器，请在 2 分钟内：\n\n"
-            "打开有当前任务的直播间即可自动获取，\n"
+            "打开有当前任务的直播间即可自动获取任务ID和房间号，\n"
             "或手动点击页面上的「刷新任务」按钮。\n\n"
             "捕获成功后浏览器会自动关闭。",
         )
         if not ok:
             return
 
-        def on_match(data):
+        def on_match(payload):
+            payload_data = payload if isinstance(payload, dict) else {}
+            request_url = str(payload_data.get("url") or "")
+            page_url = str(payload_data.get("page_url") or "")
+            room_id = self._extract_room_id_from_live_url(page_url)
+            if room_id is None:
+                room_id = self._extract_room_id_from_live_url(request_url)
+            if room_id is not None:
+                self._post_ui_task(self._apply_auto_room_id, room_id)
+                logging.getLogger(__name__).info("房间号获取成功: %s", room_id)
+
+            data = payload_data.get("data")
+            if not isinstance(data, dict):
+                raise ValueError("task response payload invalid")
             if data.get("code") != 0:
                 raise ValueError("response code != 0")
             tasks = data.get("data", {}).get("list", [])
