@@ -102,13 +102,14 @@ def main() -> None:
 
     is_release = args.release
 
-    # 开发阶段尽量少收集，通常比 --collect-all 更快
-    # 如果之后 GUI 启动发现缺资源，再退回 --collect-all customtkinter
-    gui_extra_args = [
-        "--collect-data",
-        "customtkinter",
-        "--hidden-import",
-        "darkdetect",
+    # apprise 通过文件系统扫描动态加载 plugins/ 下的通知后端，
+    # PyInstaller 静态分析不到，必须 --collect-all 把 plugins 目录一并打包
+    common_extra_args = [
+        "--collect-all",
+        "apprise",
+    ]
+
+    gui_extra_args = common_extra_args + [
         "--collect-all",
         "selenium",
     ]
@@ -133,6 +134,7 @@ def main() -> None:
             clean=False,  # 避免第二个目标再次清缓存
             noupx=True,
             debug=args.debug,
+            extra_args=common_extra_args,
         )
 
     mode = "release" if is_release else "development"
