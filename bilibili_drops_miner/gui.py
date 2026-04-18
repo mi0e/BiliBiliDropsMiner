@@ -1105,9 +1105,14 @@ class MinerGUI(QMainWindow):
         ok = QMessageBox.question(
             self,
             "无需登录，自动获取房间号",
-            "点击确定后会打开浏览器，请在 2 分钟内进入目标直播间：\n\n"
-            "例如 live.bilibili.com/23612045\n\n"
-            "检测到有效房间号后浏览器会自动关闭。",
+            '<span style="color:red; font-weight:bold;">'
+            '仅支持 Edge/Chrome！<br>'
+            '仅支持 Edge/Chrome！<br>'
+            '仅支持 Edge/Chrome！'
+            '</span><br><br>'
+            '点击确定后会打开浏览器，请在 2 分钟内进入目标直播间，<br>'
+            '即可自动获取房间号。<br><br>'
+            '捕获成功后浏览器会自动关闭。',
             QMessageBox.Ok | QMessageBox.Cancel,
         )
         if ok != QMessageBox.Ok:
@@ -1127,10 +1132,15 @@ class MinerGUI(QMainWindow):
         ok = QMessageBox.question(
             self,
             "无需登录，自动获取任务ID",
-            "点击确定后会打开浏览器，请在 2 分钟内：\n\n"
-            "打开有当前任务的直播间即可自动获取任务ID和房间号，\n"
-            "或手动点击页面上的「刷新任务」按钮。\n\n"
-            "捕获成功后浏览器会自动关闭。",
+            '<span style="color:red; font-weight:bold;">'
+            '仅支持 Edge/Chrome！<br>'
+            '仅支持 Edge/Chrome！<br>'
+            '仅支持 Edge/Chrome！'
+            '</span><br><br>'
+            '点击确定后会打开浏览器，请在 2 分钟内：<br><br>'
+            '打开有当前任务的直播间即可自动获取任务ID和房间号，<br>'
+            '或手动点击页面上的「刷新任务」按钮。<br><br>'
+            '捕获成功后浏览器会自动关闭。',
             QMessageBox.Ok | QMessageBox.Cancel,
         )
         if ok != QMessageBox.Ok:
@@ -1169,9 +1179,14 @@ class MinerGUI(QMainWindow):
         ok = QMessageBox.question(
             self,
             "自动获取Cookie",
-            "点击确定后会打开浏览器，请在浏览器中登录 B 站。\n\n"
-            "登录成功后 Cookie 会自动获取（含 httpOnly 字段），\n"
-            "浏览器会自动关闭。",
+            '<span style="color:red; font-weight:bold;">'
+            '仅支持 Edge/Chrome！<br>'
+            '仅支持 Edge/Chrome！<br>'
+            '仅支持 Edge/Chrome！'
+            '</span><br><br>'
+            '点击确定后会打开浏览器，请在 2 分钟内登录 B 站，<br>'
+            '进入任意页面后即可自动获取 Cookie。<br><br>'
+            '捕获成功后浏览器会自动关闭。',
             QMessageBox.Ok | QMessageBox.Cancel,
         )
         if ok != QMessageBox.Ok:

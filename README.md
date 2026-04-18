@@ -30,10 +30,17 @@
 
 ## 🔍 参数获取指南
 
+> [!WARNING]
+> 所有自动获取功能仅支持 Edge/Chrome！！！
+> 
+> 所有自动获取功能仅支持 Edge/Chrome！！！
+> 
+> 所有自动获取功能仅支持 Edge/Chrome！！！
+
 ### Cookie（必填）
 
 方式 1（推荐）：GUI 中点击“自动获取”，在弹出的浏览器中登录 B 站。  
-方式 2（手动）：登录 B 站后 F12 打开开发者工具复制 Cookie，必需包含 `SESSDATA` 和 `bili_jct`。
+方式 2（手动）：登录 B 站后 F12 打开开发者工具复制 Cookie，必需包含 `SESSDATA` 和 `bili_jct`，具体方法自行查询。
 
 ### 房间号（必填）
 
