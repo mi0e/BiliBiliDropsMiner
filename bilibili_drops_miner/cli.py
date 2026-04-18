@@ -15,12 +15,6 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rooms", default="", help="Room ids, comma/newline separated")
     parser.add_argument("--threads", type=int, default=1, help="Sessions per room")
     parser.add_argument(
-        "--heartbeat-interval",
-        type=int,
-        default=30,
-        help="Danmu websocket heartbeat interval",
-    )
-    parser.add_argument(
         "--reconnect-delay", type=int, default=8, help="Reconnect delay in seconds"
     )
     parser.add_argument(
@@ -45,9 +39,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Disable notification when task reaches target",
     )
     parser.add_argument("--no-color", action="store_true", help="Disable color logs")
-    parser.add_argument(
-        "--debug-events", action="store_true", help="Print live event cmd values"
-    )
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="Enable debug logs"
     )
@@ -83,10 +74,8 @@ def main(argv: list[str] | None = None) -> int:
             cookie=cookie,
             room_ids=room_ids,
             thread_count=args.threads,
-            heartbeat_interval_seconds=args.heartbeat_interval,
             reconnect_delay_seconds=args.reconnect_delay,
             enable_web_heartbeat=not args.disable_web_heartbeat,
-            debug_events=args.debug_events,
             task_ids=task_ids,
             task_query_interval_seconds=args.task_interval,
             notify_urls=notify_urls,

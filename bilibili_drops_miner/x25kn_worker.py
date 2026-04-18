@@ -1,100 +1,21 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import struct
-import zlib
 from typing import Any
-
-import websockets
 
 from bilibili_drops_miner.client import (
     BilibiliClient,
-    DanmuServerConf,
     LiveTraceSession,
     TaskProgress,
 )
 from bilibili_drops_miner.config import MinerConfig
 from bilibili_drops_miner.notifier import MultiPlatformNotifier
 
-try:
-    import brotli  # type: ignore
-except Exception:
-    brotli = None
-
-
 LOGGER = logging.getLogger(__name__)
-HEADER = struct.Struct(">IHHII")
 
 
-def _build_packet(
-    payload: bytes, operation: int, version: int = 1, sequence: int = 1
-) -> bytes:
-    packet_len = 16 + len(payload)
-    return HEADER.pack(packet_len, 16, version, operation, sequence) + payload
-
-
-def _read_packets(raw: bytes) -> list[tuple[int, int, int, bytes]]:
-    packets: list[tuple[int, int, int, bytes]] = []
-    offset = 0
-    while offset + 16 <= len(raw):
-        packet_len, header_len, version, operation, sequence = HEADER.unpack_from(
-            raw, offset
-        )
-        if packet_len < header_len or packet_len <= 0:
-            break
-        body_start = offset + header_len
-        body_end = offset + packet_len
-        if body_end > len(raw):
-            break
-        packets.append((version, operation, sequence, raw[body_start:body_end]))
-        offset += packet_len
-    return packets
-
-
-def _parse_text_events(text: str) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
-    for chunk in text.split("\x00"):
-        candidate = chunk.strip()
-        if not candidate:
-            continue
-        start = candidate.find("{")
-        end = candidate.rfind("}")
-        if start == -1 or end == -1:
-            continue
-        payload = candidate[start : end + 1]
-        try:
-            events.append(json.loads(payload))
-        except json.JSONDecodeError:
-            continue
-    return events
-
-
-def decode_message(message: bytes) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
-    for version, operation, _sequence, body in _read_packets(message):
-        if operation != 5:
-            continue
-        if version in (0, 1):
-            events.extend(_parse_text_events(body.decode("utf-8", errors="ignore")))
-            continue
-        if version == 2:
-            try:
-                events.extend(decode_message(zlib.decompress(body)))
-            except zlib.error:
-                LOGGER.debug("zlib decompress failed", exc_info=True)
-            continue
-        if version == 3 and brotli is not None:
-            try:
-                events.extend(decode_message(brotli.decompress(body)))
-            except Exception:
-                LOGGER.debug("brotli decompress failed", exc_info=True)
-            continue
-    return events
-
-
-class LiveRoomWorker:
+class X25KnWorker:
     def __init__(
         self,
         client: BilibiliClient,
@@ -104,6 +25,7 @@ class LiveRoomWorker:
         room_id: int,
         session_id: str = "",
         primary_session: bool = True,
+        stop_event: asyncio.Event | None = None,
     ) -> None:
         self.client = client
         self.notifier = notifier
@@ -112,8 +34,7 @@ class LiveRoomWorker:
         self.room_id = room_id
         self.session_id = session_id
         self.primary_session = primary_session
-        self._stop_event = asyncio.Event()
-        self._ws: websockets.WebSocketClientProtocol | None = None
+        self._stop_event = stop_event or asyncio.Event()
 
     @property
     def _ctx(self) -> str:
@@ -137,21 +58,16 @@ class LiveRoomWorker:
 
     async def stop(self) -> None:
         self._stop_event.set()
-        if self._ws is not None:
-            await self._ws.close()
-            self._ws = None
 
     async def run_forever(self) -> None:
         while not self._stop_event.is_set():
             try:
-                conf = await self.client.get_danmu_server(self.room_id)
-                LOGGER.debug("%s danmu server fetched host=%s", self._ctx, conf.host)
-                await self._run_once(conf)
+                await self._run_once()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 self._log_warning(
-                    "直播间 %s 连接断开: %s",
+                    "直播间 %s x25Kn 运行异常: %s",
                     self.room_id,
                     exc,
                     primary_only=True,
@@ -161,79 +77,39 @@ class LiveRoomWorker:
                 if self._stop_event.is_set():
                     return
 
-    async def _run_once(self, conf: DanmuServerConf) -> None:
-        auth_payload = json.dumps(
-            {
-                "uid": self.uid,
-                "roomid": conf.room_id,
-                "protover": 3,
-                "platform": "web",
-                "clientver": "1.18.6",
-                "type": 2,
-                "key": conf.token,
-            },
-            separators=(",", ":"),
-        ).encode("utf-8")
-        uri = f"wss://{conf.host}:{conf.wss_port}/sub"
-        async with websockets.connect(
-            uri, ping_interval=None, max_size=4 * 1024 * 1024
-        ) as ws:
-            self._ws = ws
-            self._log_info("直播间 %s 已连接", self.room_id, primary_only=True)
-            await ws.send(_build_packet(auth_payload, operation=7, version=1))
+    async def _run_once(self) -> None:
+        trace_heartbeat_task = asyncio.create_task(self._trace_heartbeat_loop())
+        task_monitor_task = (
+            asyncio.create_task(self._task_monitor_loop()) if self.primary_session else None
+        )
+        stop_wait_task = asyncio.create_task(self._stop_event.wait())
 
-            heartbeat_task = asyncio.create_task(self._heartbeat_loop(ws))
-            trace_heartbeat_task = asyncio.create_task(self._trace_heartbeat_loop())
-            task_monitor_task = (
-                asyncio.create_task(self._task_monitor_loop())
-                if self.primary_session
-                else None
-            )
+        tasks: list[asyncio.Task[Any]] = [trace_heartbeat_task, stop_wait_task]
+        if task_monitor_task is not None:
+            tasks.append(task_monitor_task)
 
-            try:
-                async for message in ws:
-                    if self._stop_event.is_set():
-                        return
-                    if not isinstance(message, bytes):
-                        continue
-                    events = decode_message(message)
-                    if not events:
-                        continue
-                    for event in events:
-                        if self.config.debug_events:
-                            LOGGER.debug("%s event cmd=%s", self._ctx, event.get("cmd"))
-                        self.on_event(event)
-            except websockets.exceptions.ConnectionClosed:
-                if self._stop_event.is_set():
-                    return
-                raise
-            finally:
-                self._ws = None
-                heartbeat_task.cancel()
-                trace_heartbeat_task.cancel()
-                tasks = [heartbeat_task, trace_heartbeat_task]
-                if task_monitor_task is not None:
-                    task_monitor_task.cancel()
-                    tasks.append(task_monitor_task)
-                await asyncio.gather(*tasks, return_exceptions=True)
+        try:
+            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
 
-    async def _heartbeat_loop(self, ws: Any) -> None:
-        packet = _build_packet(payload=b"", operation=2, version=1)
-        while not self._stop_event.is_set():
-            await ws.send(packet)
-            LOGGER.debug(
-                "%s sent websocket heartbeat interval=%ss",
-                self._ctx,
-                self.config.heartbeat_interval_seconds,
-            )
-            try:
-                await asyncio.wait_for(
-                    self._stop_event.wait(),
-                    timeout=self.config.heartbeat_interval_seconds,
-                )
+            if stop_wait_task in done:
                 return
-            except asyncio.TimeoutError:
-                pass
+
+            for task in done:
+                if task is stop_wait_task:
+                    continue
+                if task.cancelled():
+                    continue
+                exc = task.exception()
+                if exc is not None:
+                    raise exc
+
+            raise RuntimeError("x25Kn 子任务意外退出")
+
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _trace_heartbeat_loop(self) -> None:
         session: LiveTraceSession | None = None
@@ -269,8 +145,13 @@ class LiveRoomWorker:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                detail = str(exc).strip() or repr(exc)
                 self._log_warning(
-                    "直播间 %s 观看时长上报失败: %s", self.room_id, exc, primary_only=True
+                    "直播间 %s 观看时长上报失败[%s]: %s",
+                    self.room_id,
+                    type(exc).__name__,
+                    detail,
+                    primary_only=True,
                 )
                 session = None
                 wait_seconds = max(5, self.config.reconnect_delay_seconds)
@@ -288,16 +169,16 @@ class LiveRoomWorker:
             wait_seconds = max(10, self.config.task_query_interval_seconds)
             if not task_ids:
                 try:
-                    await asyncio.wait_for(self._stop_event.wait(), timeout=wait_seconds)
+                    await asyncio.wait_for(
+                        self._stop_event.wait(), timeout=wait_seconds
+                    )
                     return
                 except asyncio.TimeoutError:
                     continue
             try:
                 progresses = await self.client.get_task_progress(task_ids)
                 if not progresses:
-                    LOGGER.warning(
-                        "未获取到任务进度，请检查任务 ID 是否正确"
-                    )
+                    LOGGER.warning("未获取到任务进度，请检查任务 ID 是否正确")
                 else:
                     for task in progresses:
                         key = task.task_id
@@ -329,7 +210,7 @@ class LiveRoomWorker:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                LOGGER.warning("查询任务进度失败: %s", exc)
+                LOGGER.debug("查询任务进度失败: %s", exc)
                 wait_seconds = max(10, self.config.reconnect_delay_seconds)
             try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=wait_seconds)
@@ -351,20 +232,5 @@ class LiveRoomWorker:
             self._log_info(
                 "已发送通知: %s",
                 task.task_name,
-                primary_only=True,
-            )
-
-    def on_event(self, event: dict[str, Any]) -> None:
-        cmd = str(event.get("cmd", ""))
-        if cmd.startswith("POPULARITY_RED_POCKET_START"):
-            self._log_info(
-                "直播间 %s 发现红包抽奖",
-                self.room_id,
-                primary_only=True,
-            )
-        elif cmd.startswith("ANCHOR_LOT_START"):
-            self._log_info(
-                "直播间 %s 发现天选时刻",
-                self.room_id,
                 primary_only=True,
             )

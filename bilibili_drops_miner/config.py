@@ -8,10 +8,8 @@ class MinerConfig:
     cookie: str
     room_ids: list[int]
     thread_count: int = 1
-    heartbeat_interval_seconds: int = 30
     reconnect_delay_seconds: int = 8
     enable_web_heartbeat: bool = True
-    debug_events: bool = False
     task_ids: list[str] = field(default_factory=list)
     task_query_interval_seconds: int = 30
     notify_urls: list[str] = field(default_factory=list)
@@ -26,8 +24,6 @@ class MinerConfig:
             raise ValueError("room_ids 中存在非法房间号")
         if self.thread_count <= 0:
             raise ValueError("thread_count 必须大于 0")
-        if self.heartbeat_interval_seconds <= 0:
-            raise ValueError("heartbeat_interval_seconds 必须大于 0")
         if self.reconnect_delay_seconds <= 0:
             raise ValueError("reconnect_delay_seconds 必须大于 0")
         if self.task_query_interval_seconds <= 0:

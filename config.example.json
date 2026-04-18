@@ -2,10 +2,8 @@
   "cookie": "SESSDATA=xxxx; bili_jct=xxxx; DedeUserID=xxxx; buvid3=xxxx",
   "room_ids": [23612045, 1017, 22608112],
   "thread_count": 2,
-  "heartbeat_interval_seconds": 30,
   "reconnect_delay_seconds": 8,
   "enable_web_heartbeat": true,
-  "debug_events": false,
   "task_ids": [],
   "task_query_interval_seconds": 30,
   "notify_urls": [
