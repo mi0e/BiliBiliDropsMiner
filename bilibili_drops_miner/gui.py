@@ -1433,6 +1433,7 @@ class MinerGUI(QMainWindow):
                 url_done = False
                 html_done = False
                 html_attempts = 0
+                last_page_handle = None
                 last_cookie_count = 0
                 for i in range(120):
                     if need_cookie and not cookie_done and cookie_captured:
@@ -1474,9 +1475,16 @@ class MinerGUI(QMainWindow):
                             handles = list(driver.window_handles)
                         except Exception:
                             handles = []
+                        ordered_handles = []
+                        for handle in (last_page_handle, original_handle):
+                            if handle and handle in handles and handle not in ordered_handles:
+                                ordered_handles.append(handle)
+                        ordered_handles.extend(
+                            handle for handle in handles if handle not in ordered_handles
+                        )
 
                         html_attempted = False
-                        for handle in handles:
+                        for handle in ordered_handles:
                             try:
                                 driver.switch_to.window(handle)
                                 cur_url = driver.current_url or ""
@@ -1486,6 +1494,7 @@ class MinerGUI(QMainWindow):
                             room_id = MinerGUI._extract_room_id_from_live_url(cur_url)
                             if room_id is None:
                                 continue
+                            last_page_handle = handle
 
                             if need_url and not url_done:
                                 try:
@@ -1509,10 +1518,12 @@ class MinerGUI(QMainWindow):
                             ):
                                 break
 
-                        if original_handle:
+                            if need_html and not html_done and html_attempts < 3:
+                                break
+                        if last_page_handle and not html_done:
                             try:
-                                if original_handle in driver.window_handles:
-                                    driver.switch_to.window(original_handle)
+                                if last_page_handle in driver.window_handles:
+                                    driver.switch_to.window(last_page_handle)
                             except Exception:
                                 pass
                         if html_attempted and not html_done:
