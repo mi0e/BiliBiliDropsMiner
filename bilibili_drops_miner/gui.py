@@ -1094,6 +1094,7 @@ class MinerGUI(QMainWindow):
     ) -> None:
         def _do() -> None:
             server = None
+            server_thread = None
             ext_dir = None
             driver = None
             browser_type = None
@@ -1111,9 +1112,11 @@ class MinerGUI(QMainWindow):
                 need_cookie = on_cookies is not None
                 need_url = on_page_url is not None
                 need_html = on_page_html is not None
+                need_page = need_url or need_html
 
                 net_captured: list = []
                 cookie_captured: list = []
+                page_captured: list = []
 
                 class _Handler(BaseHTTPRequestHandler):
                     def do_POST(self):
@@ -1123,6 +1126,8 @@ class MinerGUI(QMainWindow):
                             data = json.loads(body)
                             if data.get("type") == "__bili_cookies__":
                                 cookie_captured.append(data["cookies"])
+                            elif data.get("type") == "__bili_page__":
+                                page_captured.append(data)
                             else:
                                 net_captured.append(data)
                         except Exception:
@@ -1143,9 +1148,43 @@ class MinerGUI(QMainWindow):
 
                 server = HTTPServer(("127.0.0.1", 0), _Handler)
                 port = server.server_address[1]
-                threading.Thread(target=server.serve_forever, daemon=True).start()
+                server_thread = threading.Thread(
+                    target=server.serve_forever,
+                    daemon=True,
+                    name="bili-sniff-server",
+                )
+                server_thread.start()
 
                 ext_dir = tempfile.mkdtemp(prefix="bili_sniff_")
+
+                def _page_reporter_js(port_local: int) -> str:
+                    return (
+                        "(function(){\n"
+                        "if(window.__bili_page_reporter__)return;\n"
+                        "window.__bili_page_reporter__=true;\n"
+                        "var last='';\n"
+                        "function sendPage(){\n"
+                        "  if(document.visibilityState!=='visible')return;\n"
+                        "  var url=window.location.href;\n"
+                        "  if(url.indexOf('live.bilibili.com')===-1)return;\n"
+                        "  var html=document.documentElement?document.documentElement.outerHTML:'';\n"
+                        "  var key=url+'|'+html.length;\n"
+                        "  if(key===last)return;\n"
+                        "  last=key;\n"
+                        "  fetch('http://127.0.0.1:"
+                        + str(port_local)
+                        + "/',{\n"
+                        "    method:'POST',\n"
+                        "    headers:{'Content-Type':'application/json'},\n"
+                        "    body:JSON.stringify({type:'__bili_page__',url:url,html:html})\n"
+                        "  }).catch(function(){});\n"
+                        "}\n"
+                        "sendPage();\n"
+                        "setInterval(sendPage,1000);\n"
+                        "document.addEventListener('visibilitychange',sendPage);\n"
+                        "window.addEventListener('load',sendPage);\n"
+                        "})();"
+                    )
 
                 def _write_ext_edge() -> None:
                     manifest: dict = {
@@ -1177,7 +1216,7 @@ class MinerGUI(QMainWindow):
                             "window.fetch=async function(){\n"
                             "  var resp=await origFetch.apply(this,arguments);\n"
                             "  var url=(typeof arguments[0]==='string')?arguments[0]:arguments[0].url;\n"
-                            "  if(url.indexOf('" + (url_keyword or "") + "')!==-1){\n"
+                            "  if(document.visibilityState==='visible'&&url.indexOf('" + (url_keyword or "") + "')!==-1){\n"
                             "    try{var d=await resp.clone().json();\n"
                             "      window.postMessage({type:'__bili_sniff__',payload:{url:url,data:d,page_url:window.location.href}},'*');\n"
                             "    }catch(e){}\n"
@@ -1191,7 +1230,7 @@ class MinerGUI(QMainWindow):
                             "XMLHttpRequest.prototype.send=function(){\n"
                             "  var self=this;\n"
                             "  this.addEventListener('load',function(){\n"
-                            "    if(self.__url&&self.__url.indexOf('"
+                            "    if(document.visibilityState==='visible'&&self.__url&&self.__url.indexOf('"
                             + (url_keyword or "")
                             + "')!==-1){\n"
                             "      try{window.postMessage({type:'__bili_sniff__',\n"
@@ -1214,6 +1253,16 @@ class MinerGUI(QMainWindow):
                             "  }\n"
                             "});"
                         )
+
+                    if need_page:
+                        manifest["content_scripts"].append(
+                            {
+                                "matches": ["*://*.bilibili.com/*"],
+                                "js": ["page.js"],
+                                "run_at": "document_idle",
+                            }
+                        )
+                        files["page.js"] = _page_reporter_js(port)
 
                     if need_cookie:
                         manifest["permissions"] = ["cookies"]
@@ -1259,10 +1308,14 @@ class MinerGUI(QMainWindow):
                     )
 
                     background_js = (
+                        "var NEED_NET = " + ("true" if need_net else "false") + ";\n"
+                        "var NEED_COOKIE = "
+                        + ("true" if need_cookie else "false")
+                        + ";\n"
                         "var injectedTabs = {};\n"
                         "var PORT = " + str(port_local) + ";\n"
                         "function injectTab(tabId) {\n"
-                        "  if (injectedTabs[tabId]) return;\n"
+                        "  if (!NEED_NET || injectedTabs[tabId]) return;\n"
                         "  injectedTabs[tabId] = true;\n"
                         "  chrome.scripting.executeScript({\n"
                         "    target: {tabId: tabId},\n"
@@ -1290,7 +1343,7 @@ class MinerGUI(QMainWindow):
                         "      window.fetch = async function() {\n"
                         "        var resp = await origFetch.apply(this, arguments);\n"
                         "        var url = (typeof arguments[0] === 'string') ? arguments[0] : arguments[0].url;\n"
-                        "        if (url.indexOf(kw) !== -1) {\n"
+                        "        if (document.visibilityState === 'visible' && url.indexOf(kw) !== -1) {\n"
                         "          try {\n"
                         "            var d = await resp.clone().json();\n"
                         "            window.postMessage({type: '__bili_sniff__', payload: {url: url, data: d, page_url: window.location.href}}, '*');\n"
@@ -1306,7 +1359,7 @@ class MinerGUI(QMainWindow):
                         "      XMLHttpRequest.prototype.send = function() {\n"
                         "        var self = this;\n"
                         "        this.addEventListener('load', function() {\n"
-                        "          if (self.__url && self.__url.indexOf(kw) !== -1) {\n"
+                        "          if (document.visibilityState === 'visible' && self.__url && self.__url.indexOf(kw) !== -1) {\n"
                         "            try {\n"
                         "              window.postMessage({type: '__bili_sniff__', payload: {url: self.__url, data: JSON.parse(self.responseText), page_url: window.location.href}}, '*');\n"
                         "            } catch(e) {}\n"
@@ -1317,6 +1370,7 @@ class MinerGUI(QMainWindow):
                         "    }\n"
                         "  });\n"
                         "}\n"
+                        "if (NEED_NET) {\n"
                         "chrome.tabs.onUpdated.addListener(function(tabId, changeInfo, tab) {\n"
                         "  if (changeInfo.status === 'complete' && tab.url && tab.url.indexOf('bilibili.com') !== -1) {\n"
                         "    injectTab(tabId);\n"
@@ -1325,7 +1379,9 @@ class MinerGUI(QMainWindow):
                         "chrome.tabs.query({url: '*://*.bilibili.com/*'}, function(tabs) {\n"
                         "  tabs.forEach(function(tab) { injectTab(tab.id); });\n"
                         "});\n"
+                        "}\n"
                         "function sendCookies() {\n"
+                        "  if (!NEED_COOKIE) return;\n"
                         "  chrome.cookies.getAll({domain: '.bilibili.com'}, function(cookies) {\n"
                         "    if (cookies && cookies.length > 0) {\n"
                         "      fetch('http://127.0.0.1:' + PORT + '/', {\n"
@@ -1336,6 +1392,7 @@ class MinerGUI(QMainWindow):
                         "    }\n"
                         "  });\n"
                         "}\n"
+                        "if (NEED_COOKIE) {\n"
                         "sendCookies();\n"
                         "setInterval(sendCookies, 3000);\n"
                         "chrome.cookies.onChanged.addListener(function(changeInfo) {\n"
@@ -1343,6 +1400,7 @@ class MinerGUI(QMainWindow):
                         "    sendCookies();\n"
                         "  }\n"
                         "});\n"
+                        "}\n"
                     )
 
                     manifest = {
@@ -1367,6 +1425,15 @@ class MinerGUI(QMainWindow):
                             }
                         )
 
+                    if need_page:
+                        manifest["content_scripts"].append(
+                            {
+                                "matches": ["*://*.bilibili.com/*"],
+                                "js": ["page.js"],
+                                "run_at": "document_idle",
+                            }
+                        )
+
                     ext_path = os.path.join(ext_dir, "manifest.json")
                     with open(ext_path, "w", encoding="utf-8") as f:
                         json.dump(manifest, f, indent=2)
@@ -1381,6 +1448,12 @@ class MinerGUI(QMainWindow):
                             os.path.join(ext_dir, "relay.js"), "w", encoding="utf-8"
                         ) as f:
                             f.write(relay_js)
+
+                    if need_page:
+                        with open(
+                            os.path.join(ext_dir, "page.js"), "w", encoding="utf-8"
+                        ) as f:
+                            f.write(_page_reporter_js(port_local))
 
                 last_exc = None
                 for _browser in MinerGUI._browser_try_order(browser_preference):
@@ -1433,7 +1506,6 @@ class MinerGUI(QMainWindow):
                 url_done = False
                 html_done = False
                 html_attempts = 0
-                last_page_handle = None
                 last_cookie_count = 0
                 for i in range(120):
                     if need_cookie and not cookie_done and cookie_captured:
@@ -1467,36 +1539,15 @@ class MinerGUI(QMainWindow):
                                 last_cookie_count = len(cookie_captured)
 
                     if (need_url and not url_done) or (need_html and not html_done):
-                        try:
-                            original_handle = driver.current_window_handle
-                        except Exception:
-                            original_handle = None
-                        try:
-                            handles = list(driver.window_handles)
-                        except Exception:
-                            handles = []
-                        ordered_handles = []
-                        for handle in (last_page_handle, original_handle):
-                            if handle and handle in handles and handle not in ordered_handles:
-                                ordered_handles.append(handle)
-                        ordered_handles.extend(
-                            handle for handle in handles if handle not in ordered_handles
-                        )
-
                         html_attempted = False
-                        for handle in ordered_handles:
-                            try:
-                                driver.switch_to.window(handle)
-                                cur_url = driver.current_url or ""
-                            except Exception:
-                                continue
-
+                        latest_page = None
+                        while page_captured:
+                            latest_page = page_captured.pop(0)
+                        if latest_page:
+                            cur_url = str(latest_page.get("url") or "")
                             room_id = MinerGUI._extract_room_id_from_live_url(cur_url)
-                            if room_id is None:
-                                continue
-                            last_page_handle = handle
 
-                            if need_url and not url_done:
+                            if room_id is not None and need_url and not url_done:
                                 try:
                                     on_page_url(room_id)
                                     url_done = True
@@ -1505,27 +1556,15 @@ class MinerGUI(QMainWindow):
                                         "on_page_url 回调失败"
                                     )
 
-                            if need_html and not html_done:
+                            if room_id is not None and need_html and not html_done:
                                 try:
-                                    page_html = driver.page_source or ""
+                                    page_html = str(latest_page.get("html") or "")
                                     html_attempted = True
                                     html_done = bool(on_page_html(page_html, cur_url))
                                 except Exception:
-                                    logging.getLogger(__name__).exception("页面源码回调失败")
-
-                            if (not need_url or url_done) and (
-                                not need_html or html_done
-                            ):
-                                break
-
-                            if need_html and not html_done and html_attempts < 3:
-                                break
-                        if last_page_handle and not html_done:
-                            try:
-                                if last_page_handle in driver.window_handles:
-                                    driver.switch_to.window(last_page_handle)
-                            except Exception:
-                                pass
+                                    logging.getLogger(__name__).exception(
+                                        "页面源码回调失败"
+                                    )
                         if html_attempted and not html_done:
                             html_attempts += 1
 
@@ -1575,6 +1614,20 @@ class MinerGUI(QMainWindow):
                 logging.getLogger(__name__).exception("自动获取失败")
                 self._post_ui_task(self._show_error, "错误", f"自动获取失败: {exc}")
             finally:
+                if server:
+                    try:
+                        server.shutdown()
+                    except Exception:
+                        pass
+                    try:
+                        server.server_close()
+                    except Exception:
+                        pass
+                if server_thread and server_thread.is_alive():
+                    try:
+                        server_thread.join(timeout=2)
+                    except Exception:
+                        pass
                 if cdp_session:
                     try:
                         cdp_session.close()
@@ -1583,11 +1636,6 @@ class MinerGUI(QMainWindow):
                 if driver:
                     try:
                         driver.quit()
-                    except Exception:
-                        pass
-                if server:
-                    try:
-                        server.shutdown()
                     except Exception:
                         pass
                 if ext_dir:
