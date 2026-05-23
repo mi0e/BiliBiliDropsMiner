@@ -15,7 +15,7 @@ import webbrowser
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QCloseEvent, QFont, QTextCursor
+from PySide6.QtGui import QCloseEvent, QFont
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -130,10 +131,10 @@ class MinerGUI(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(f"Bilibili 直播掉宝助手 {APP_VERSION}")
-        self.resize(1000, 720)
-        self.setMinimumSize(1000, 720)
-        self._size_expanded = (1000, 920)
-        self._size_collapsed = (1000, 720)
+        self.resize(1040, 760)
+        self.setMinimumSize(860, 620)
+        self._size_expanded = (1040, 920)
+        self._size_collapsed = (1040, 760)
 
         self.log_queue: "queue.Queue[str]" = queue.Queue()
         self.worker_thread: threading.Thread | None = None
@@ -273,7 +274,8 @@ class MinerGUI(QMainWindow):
         # indeterminate progress bar (Qt handles animation natively)
         self.progress_bar = QProgressBar()
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setFixedHeight(6)
+        self.progress_bar.setMinimumHeight(6)
+        self.progress_bar.setMaximumHeight(10)
         self.progress_bar.setRange(0, 1)  # stopped state
         self.progress_bar.setValue(0)
         self.progress_bar.setVisible(False)
@@ -307,11 +309,12 @@ class MinerGUI(QMainWindow):
         self.task_text.setReadOnly(True)
         self.task_text.setFont(QFont("Consolas", 10))
         self.task_text.setLineWrapMode(QPlainTextEdit.NoWrap)
-        self.task_text.setFixedHeight(180)
+        self.task_text.setMinimumHeight(160)
+        self.task_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.task_text.setPlainText("点击“手动刷新”查看任务进度")
         task_layout.addWidget(self.task_text)
 
-        root_layout.addWidget(task_card)
+        root_layout.addWidget(task_card, 1)
 
         # ---- Log card (collapsible, default collapsed) ----
         self.log_card = QFrame()
@@ -339,11 +342,12 @@ class MinerGUI(QMainWindow):
         self.log_text.setReadOnly(True)
         self.log_text.setFont(QFont("Consolas", 10))
         self.log_text.setMaximumBlockCount(5000)
+        self.log_text.setMinimumHeight(160)
+        self.log_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.log_text.setVisible(False)
         log_layout.addWidget(self.log_text)
 
         root_layout.addWidget(self.log_card)
-        root_layout.addStretch(1)
 
         self._log_expanded = False
 
@@ -355,13 +359,16 @@ class MinerGUI(QMainWindow):
     def _make_small_edit(self, default: str) -> QLineEdit:
         w = QLineEdit()
         w.setText(default)
-        w.setFixedWidth(70)
+        w.setMinimumWidth(70)
+        w.setMaximumWidth(120)
+        w.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         return w
 
     def _make_button(self, text: str, color: str, slot) -> QPushButton:
         btn = QPushButton(text)
         btn.setStyleSheet(_BUTTON_STYLES.get(color, _BUTTON_STYLES[""]))
         btn.setCursor(Qt.PointingHandCursor)
+        btn.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         btn.clicked.connect(slot)
         return btn
 
@@ -374,14 +381,16 @@ class MinerGUI(QMainWindow):
         row = QHBoxLayout()
         row.setSpacing(8)
         lab = QLabel(label)
-        lab.setFixedWidth(72)
+        lab.setMinimumWidth(72)
+        lab.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         lab.setStyleSheet("color:#9aa0a6;")
         row.addWidget(lab)
+        editor.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         row.addWidget(editor, 1)
         if extra_button is not None:
             text, color, slot = extra_button
             b = self._make_button(text, color, slot)
-            b.setFixedWidth(100)
+            b.setMinimumWidth(100)
             row.addWidget(b)
         return row
 
@@ -422,10 +431,10 @@ class MinerGUI(QMainWindow):
             except queue.Empty:
                 break
         if lines:
+            scroll_bar = self.log_text.verticalScrollBar()
+            scroll_value = scroll_bar.value()
             self.log_text.appendPlainText("\n".join(lines))
-            cursor = self.log_text.textCursor()
-            cursor.movePosition(QTextCursor.End)
-            self.log_text.setTextCursor(cursor)
+            scroll_bar.setValue(min(scroll_value, scroll_bar.maximum()))
 
         if self._task_progress_pending:
             self._task_progress_pending = False
@@ -673,11 +682,11 @@ class MinerGUI(QMainWindow):
         if self._log_expanded:
             self.log_text.setVisible(False)
             self._log_toggle_btn.setText("▶ 运行日志")
-            self.resize(*self._size_collapsed)
+            self.resize(self.width(), self._size_collapsed[1])
         else:
             self.log_text.setVisible(True)
             self._log_toggle_btn.setText("▼ 运行日志")
-            self.resize(*self._size_expanded)
+            self.resize(self.width(), self._size_expanded[1])
         self._log_expanded = not self._log_expanded
 
     def clear_logs(self) -> None:
@@ -781,6 +790,8 @@ class MinerGUI(QMainWindow):
             finally:
                 with self._reward_claim_lock:
                     self._reward_claim_inflight = False
+                if result_text:
+                    logging.getLogger(__name__).info("领取奖励结果:\n%s", result_text)
                 self._post_ui_task(self._set_task_progress_text, result_text)
 
         threading.Thread(target=_do, daemon=True, name="gui-reward-claim").start()
