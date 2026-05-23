@@ -10,6 +10,8 @@ import re
 import sys
 import threading
 import time
+import urllib.request
+import webbrowser
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -18,6 +20,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QFileDialog,
+    QDialog,
     QFrame,
     QHBoxLayout,
     QInputDialog,
@@ -41,6 +44,25 @@ from bilibili_drops_miner.utils import (
     parse_room_ids,
     parse_task_ids,
 )
+
+try:
+    from bilibili_drops_miner._version import (
+        APP_VERSION,
+        LATEST_RELEASE_API,
+        RELEASES_URL,
+        UPDATE_CHANNEL,
+    )
+except Exception:
+    APP_VERSION = "0.0.0+dev"
+    UPDATE_CHANNEL = "dev"
+    LATEST_RELEASE_API = (
+        "https://api.github.com/repos/mi0e/BiliBiliDropsMiner/releases/latest"
+    )
+    RELEASES_URL = "https://github.com/mi0e/BiliBiliDropsMiner/releases/latest"
+
+
+def _normalize_version(value: str) -> str:
+    return value.strip().lower().lstrip("v")
 
 
 class QueueLogHandler(logging.Handler):
@@ -107,7 +129,7 @@ class MinerGUI(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Bilibili 直播掉宝助手")
+        self.setWindowTitle(f"Bilibili 直播掉宝助手 {APP_VERSION}")
         self.resize(1000, 720)
         self.setMinimumSize(1000, 720)
         self._size_expanded = (1000, 920)
@@ -155,6 +177,8 @@ class MinerGUI(QMainWindow):
         self._task_refresh_timer = QTimer(self)
         self._task_refresh_timer.setSingleShot(True)
         self._task_refresh_timer.timeout.connect(self._schedule_task_refresh)
+
+        QTimer.singleShot(3000, self._check_update_silent)
 
     # ---------- layout ----------
 
@@ -421,6 +445,95 @@ class MinerGUI(QMainWindow):
 
     def _show_error(self, title: str, msg: str) -> None:
         QMessageBox.critical(self, title, msg)
+
+    # ---------- update check ----------
+
+    def _check_update_silent(self) -> None:
+        if UPDATE_CHANNEL != "release":
+            return
+        current_version = _normalize_version(APP_VERSION)
+        if not current_version or current_version.startswith("dev"):
+            return
+
+        def _do() -> None:
+            try:
+                request = urllib.request.Request(
+                    LATEST_RELEASE_API,
+                    headers={
+                        "Accept": "application/vnd.github+json",
+                        "User-Agent": "BilibiliDropsMiner",
+                    },
+                )
+                with urllib.request.urlopen(request, timeout=8) as response:
+                    if response.status >= 400:
+                        return
+                    payload = json.loads(
+                        response.read(65536).decode("utf-8", errors="replace")
+                    )
+                latest_version = str(payload.get("tag_name") or "").strip()
+                if not latest_version:
+                    return
+                if _normalize_version(latest_version) == current_version:
+                    return
+                release_url = str(payload.get("html_url") or "").strip() or RELEASES_URL
+                self._post_ui_task(
+                    self._show_update_available,
+                    latest_version,
+                    release_url,
+                )
+            except Exception:
+                return
+
+        threading.Thread(target=_do, daemon=True, name="gui-update-check").start()
+
+    def _show_update_available(self, latest_version: str, release_url: str) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("发现新版本")
+        dialog.setModal(True)
+        dialog.setMinimumWidth(430)
+        dialog.setStyleSheet(
+            "QDialog{background:#1f232b;color:#e6e7eb;}"
+            "QLabel{color:#e6e7eb;}"
+            "QPushButton{background:#2f343e;color:#e6e7eb;border:1px solid #3a3f4b;"
+            "border-radius:6px;padding:8px 18px;min-width:92px;}"
+            "QPushButton:hover{background:#3a4150;border-color:#4f8cff;}"
+            "QPushButton#primary{background:#4f8cff;color:#ffffff;border-color:#4f8cff;}"
+            "QPushButton#primary:hover{background:#3b73e6;}"
+        )
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(24, 22, 24, 20)
+        layout.setSpacing(14)
+
+        title = QLabel(f"发现新版本 {latest_version}")
+        title_font = QFont()
+        title_font.setPointSize(14)
+        title_font.setBold(True)
+        title.setFont(title_font)
+        layout.addWidget(title)
+
+        body = QLabel(
+            f"当前版本：{APP_VERSION}\n"
+            "发布仓库：github.com/mi0e/BiliBiliDropsMiner\n"
+            "可前往发布页下载最新版本。"
+        )
+        body.setWordWrap(True)
+        body.setStyleSheet("color:#c9d1d9;line-height:1.45;")
+        layout.addWidget(body)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        later_btn = QPushButton("稍后")
+        open_btn = QPushButton("打开发布页")
+        open_btn.setObjectName("primary")
+        later_btn.clicked.connect(dialog.reject)
+        open_btn.clicked.connect(dialog.accept)
+        button_row.addWidget(later_btn)
+        button_row.addWidget(open_btn)
+        layout.addLayout(button_row)
+
+        if dialog.exec() == QDialog.Accepted:
+            webbrowser.open(release_url)
 
     # ---------- config ----------
 
