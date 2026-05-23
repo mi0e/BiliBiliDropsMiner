@@ -966,6 +966,7 @@ class MinerGUI(QMainWindow):
         on_page_url=None,
         on_page_html=None,
         browser_preference: str | None = None,
+        finish_on_any: bool = False,
     ) -> None:
         def _do() -> None:
             server = None
@@ -1307,6 +1308,7 @@ class MinerGUI(QMainWindow):
                 net_done = False
                 url_done = False
                 html_done = False
+                html_attempts = 0
                 last_cookie_count = 0
                 for i in range(120):
                     if need_cookie and not cookie_done and cookie_captured:
@@ -1339,41 +1341,90 @@ class MinerGUI(QMainWindow):
                             if len(cookie_captured) > last_cookie_count:
                                 last_cookie_count = len(cookie_captured)
 
-                    if need_net and not net_done and net_captured:
-                        on_network_match(net_captured[0])
-                        net_done = True
-
-                    if need_url and not url_done:
+                    if (need_url and not url_done) or (need_html and not html_done):
                         try:
-                            cur_url = driver.current_url or ""
+                            original_handle = driver.current_window_handle
                         except Exception:
-                            cur_url = ""
-                        room_id = MinerGUI._extract_room_id_from_live_url(cur_url)
-                        if room_id is not None:
-                            try:
-                                on_page_url(room_id)
-                            except Exception:
-                                logging.getLogger(__name__).exception("on_page_url 回调失败")
-                            url_done = True
-
-                    if need_html and not html_done:
+                            original_handle = None
                         try:
-                            cur_url = driver.current_url or ""
+                            handles = list(driver.window_handles)
                         except Exception:
-                            cur_url = ""
-                        room_id = MinerGUI._extract_room_id_from_live_url(cur_url)
-                        if room_id is not None:
-                            try:
-                                page_html = driver.page_source or ""
-                                html_done = bool(on_page_html(page_html, cur_url))
-                            except Exception:
-                                logging.getLogger(__name__).exception("页面源码回调失败")
+                            handles = []
 
-                    if (
-                        (not need_cookie or cookie_done)
-                        and (not need_net or net_done)
-                        and (not need_url or url_done)
-                        and (not need_html or html_done)
+                        html_attempted = False
+                        for handle in handles:
+                            try:
+                                driver.switch_to.window(handle)
+                                cur_url = driver.current_url or ""
+                            except Exception:
+                                continue
+
+                            room_id = MinerGUI._extract_room_id_from_live_url(cur_url)
+                            if room_id is None:
+                                continue
+
+                            if need_url and not url_done:
+                                try:
+                                    on_page_url(room_id)
+                                    url_done = True
+                                except Exception:
+                                    logging.getLogger(__name__).exception(
+                                        "on_page_url 回调失败"
+                                    )
+
+                            if need_html and not html_done:
+                                try:
+                                    page_html = driver.page_source or ""
+                                    html_attempted = True
+                                    html_done = bool(on_page_html(page_html, cur_url))
+                                except Exception:
+                                    logging.getLogger(__name__).exception("页面源码回调失败")
+
+                            if (not need_url or url_done) and (
+                                not need_html or html_done
+                            ):
+                                break
+
+                        if original_handle:
+                            try:
+                                if original_handle in driver.window_handles:
+                                    driver.switch_to.window(original_handle)
+                            except Exception:
+                                pass
+                        if html_attempted and not html_done:
+                            html_attempts += 1
+
+                    network_ready = (
+                        not need_html
+                        or not finish_on_any
+                        or html_done
+                        or html_attempts >= 3
+                    )
+                    if need_net and not net_done and net_captured and network_ready:
+                        payload = net_captured.pop(0) if finish_on_any else net_captured[0]
+                        try:
+                            on_network_match(payload)
+                            net_done = True
+                        except Exception:
+                            if finish_on_any:
+                                logging.getLogger(__name__).exception(
+                                    "网络响应回调失败，继续等待其他获取方式"
+                                )
+                            else:
+                                raise
+
+                    done_states = [
+                        done
+                        for enabled, done in (
+                            (need_cookie, cookie_done),
+                            (need_net, net_done),
+                            (need_url, url_done),
+                            (need_html, html_done),
+                        )
+                        if enabled
+                    ]
+                    if done_states and (
+                        any(done_states) if finish_on_any else all(done_states)
                     ):
                         break
 
@@ -1465,11 +1516,39 @@ class MinerGUI(QMainWindow):
             self._post_ui_task(self._apply_selected_task_group, room_id, task_groups)
             return True
 
+        def on_match(payload) -> None:
+            payload_data = payload if isinstance(payload, dict) else {}
+            request_url = str(payload_data.get("url") or "")
+            page_url = str(payload_data.get("page_url") or "")
+            room_id = self._extract_room_id_from_live_url(page_url)
+            if room_id is None:
+                room_id = self._extract_room_id_from_live_url(request_url)
+            if room_id is not None:
+                self._post_ui_task(self._apply_auto_room_id, room_id)
+                logging.getLogger(__name__).info("房间号获取成功: %s", room_id)
+
+            data = payload_data.get("data")
+            if not isinstance(data, dict):
+                raise ValueError("task response payload invalid")
+            if data.get("code") != 0:
+                raise ValueError("response code != 0")
+            tasks = data.get("data", {}).get("list", [])
+            task_ids = [t.get("task_id") for t in tasks if t.get("task_id")]
+            if not task_ids:
+                raise ValueError("empty task list")
+            self._post_ui_task(self._apply_auto_task_ids, ",".join(task_ids))
+            logging.getLogger(__name__).info(
+                "任务ID获取成功（API 兜底）: %s",
+                ",".join(task_ids),
+            )
+
         self._browser_sniff(
-            None,
+            "/x/task/totalv2",
             "已打开浏览器，请打开有当前任务的直播间并等待页面加载完成",
+            on_network_match=on_match,
             on_page_html=on_page_html,
             browser_preference=browser,
+            finish_on_any=True,
         )
         return
 
