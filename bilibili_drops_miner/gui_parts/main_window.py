@@ -79,6 +79,7 @@ class MinerGUI(QMainWindow):
 
         self._last_verbose: bool | None = None
         self._task_progress_result: str = ""
+        self._live_watch_time_result: str = ""
         self._task_progress_pending: bool = False
         self._task_refresh_trigger_pending: bool = False
         self.ui_call.connect(self._on_ui_call, Qt.QueuedConnection)
@@ -96,9 +97,11 @@ class MinerGUI(QMainWindow):
         )
         self.task_controller = TaskController(
             get_cookie=lambda: self.cookie_edit.text().strip(),
+            get_room_ids=lambda: parse_room_ids(self.rooms_edit.text().strip()),
             get_task_ids=lambda: parse_task_ids(self.task_ids_edit.text().strip()),
             show_warning=self._show_warning,
             set_task_progress_text=self._set_task_progress_text,
+            set_live_watch_time_text=self._set_live_watch_time_text,
             complete_task_refresh=self._complete_task_refresh,
             post_ui_task=self._post_ui_task,
         )
@@ -120,6 +123,12 @@ class MinerGUI(QMainWindow):
         self._task_refresh_timer = QTimer(self)
         self._task_refresh_timer.setSingleShot(True)
         self._task_refresh_timer.timeout.connect(self._schedule_task_refresh)
+
+        self._live_watch_time_timer = QTimer(self)
+        self._live_watch_time_timer.setSingleShot(True)
+        self._live_watch_time_timer.timeout.connect(
+            self._schedule_live_watch_time_refresh
+        )
 
         QTimer.singleShot(3000, self._check_update_silent)
 
@@ -203,7 +212,7 @@ class MinerGUI(QMainWindow):
 
         if self._task_progress_pending:
             self._task_progress_pending = False
-            self.task_text.setPlainText(self._task_progress_result)
+            self.task_text.setPlainText(self._build_task_progress_text())
 
         if self._task_refresh_trigger_pending:
             self._task_refresh_trigger_pending = False
@@ -287,13 +296,19 @@ class MinerGUI(QMainWindow):
             self._show_info("运行中", "助手已在运行中。")
             return
         logger.info("掉宝助手已启动")
+        self.task_controller.reset_live_watch_time()
+        self._set_live_watch_time_text("本次预估观看时长: 0秒")
         self._start_progress_animation()
         self._config_sync_timer.start()
+        self._schedule_live_watch_time_refresh()
         self._schedule_task_refresh()
 
     def stop(self) -> None:
         logger = logging.getLogger(__name__)
         self._stop_progress_animation()
+        self._task_refresh_timer.stop()
+        self._live_watch_time_timer.stop()
+        self.task_controller.stop_live_watch_time()
         result = self.worker_controller.request_stop(logger=logger)
         if result == "stopping_started":
             self._stop_poll_timer.start()
@@ -335,8 +350,20 @@ class MinerGUI(QMainWindow):
 
     # ---------- task progress ----------
 
+    def _build_task_progress_text(self) -> str:
+        lines: list[str] = []
+        if self._live_watch_time_result:
+            lines.append(self._live_watch_time_result)
+        if self._task_progress_result:
+            lines.append(self._task_progress_result)
+        return "\n".join(lines) or "点击“手动刷新”查看任务进度"
+
     def _set_task_progress_text(self, text: str) -> None:
         self._task_progress_result = text
+        self._task_progress_pending = True
+
+    def _set_live_watch_time_text(self, text: str) -> None:
+        self._live_watch_time_result = text
         self._task_progress_pending = True
 
     def _complete_task_refresh(self, result_text: str, rerun: bool) -> None:
@@ -438,6 +465,15 @@ class MinerGUI(QMainWindow):
         except ValueError:
             interval = 30
         self._task_refresh_timer.start(max(10, interval) * 1000)
+
+    def _schedule_live_watch_time_refresh(self) -> None:
+        if (
+            self.worker_controller.stop_signal_set
+            or not self.worker_controller.is_running
+        ):
+            return
+        self.task_controller.refresh_live_watch_time()
+        self._live_watch_time_timer.start(3000)
 
     def _sync_config_to_miner(self) -> None:
         worker = self.worker_controller

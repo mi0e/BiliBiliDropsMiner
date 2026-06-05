@@ -21,6 +21,14 @@ class LiveRoomInfo:
 
 
 @dataclass(slots=True)
+class LiveWatchTime:
+    room_id: int
+    ruid: int
+    watch_time: int
+    rusername: str = ""
+
+
+@dataclass(slots=True)
 class LiveTraceSession:
     room_id: int
     ruid: int
@@ -83,4 +91,3 @@ class MissionRewardClaimResult:
     success: bool
     skipped: bool
     code: int | str | None = None
-

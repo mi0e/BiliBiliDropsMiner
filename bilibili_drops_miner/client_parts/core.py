@@ -29,7 +29,9 @@ from bilibili_drops_miner.client_parts.http import (
 )
 from bilibili_drops_miner.client_parts.live import (
     parse_danmu_server_conf,
+    parse_guard_active_watch_time,
     parse_live_room_info,
+    parse_room_owner_uid,
 )
 from bilibili_drops_miner.client_parts.live_trace import (
     apply_live_trace_heartbeat_payload,
@@ -44,6 +46,7 @@ from bilibili_drops_miner.client_parts.models import (
     DanmuServerConf,
     LiveRoomInfo,
     LiveTraceSession,
+    LiveWatchTime,
     MissionRewardClaimResult,
     MissionRewardInfo,
     TaskProgress,
@@ -298,6 +301,47 @@ class BilibiliClient:
             retry_on_wbi_miss=True,
         )
         return parse_live_room_info(payload, room_id)
+
+    async def get_room_owner_uid(self, room_id: int) -> int:
+        response = await self._request_with_transient_retry(
+            lambda: self._http.get(
+                "https://api.live.bilibili.com/room/v1/Room/get_info",
+                params={"room_id": room_id},
+                headers=self._live_headers(room_id),
+            ),
+            method="GET",
+            url="https://api.live.bilibili.com/room/v1/Room/get_info",
+        )
+        response.raise_for_status()
+        return parse_room_owner_uid(response.json(), room_id)
+
+    async def get_live_watch_time(
+        self,
+        room_id: int,
+        *,
+        ruid: int | None = None,
+    ) -> LiveWatchTime:
+        resolved_ruid = ruid or await self.get_room_owner_uid(room_id)
+        response = await self._request_with_transient_retry(
+            lambda: self._http.get(
+                "https://api.live.bilibili.com/xlive/general-interface/v1/guard/GuardActive",
+                params={"ruid": resolved_ruid, "platform": "pc"},
+                headers=self._live_headers(room_id),
+            ),
+            method="GET",
+            url="https://api.live.bilibili.com/xlive/general-interface/v1/guard/GuardActive",
+        )
+        response.raise_for_status()
+        watch_time, rusername = parse_guard_active_watch_time(
+            response.json(),
+            resolved_ruid,
+        )
+        return LiveWatchTime(
+            room_id=room_id,
+            ruid=resolved_ruid,
+            watch_time=watch_time,
+            rusername=rusername,
+        )
 
     async def room_entry_action(self, room_id: int) -> None:
         if not self.bili_jct:

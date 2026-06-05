@@ -2,6 +2,43 @@ from __future__ import annotations
 
 import re
 
+from bilibili_drops_miner.client import LiveWatchTime
+
+
+def format_seconds_zh(total_seconds: int | float) -> str:
+    seconds = max(0, int(total_seconds))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours > 0:
+        return f"{hours}小时{minutes:02d}分{seconds:02d}秒"
+    if minutes > 0:
+        return f"{minutes}分{seconds:02d}秒"
+    return f"{seconds}秒"
+
+
+def format_live_watch_time_progress(
+    watch_times: list[LiveWatchTime],
+    baselines: dict[int, int],
+) -> str:
+    if not watch_times:
+        return "本次预估观看时长: 无数据"
+
+    parts: list[tuple[str, str]] = []
+    for item in watch_times:
+        baseline = baselines.get(item.room_id, item.watch_time)
+        elapsed = max(0, item.watch_time - baseline)
+        room_label = f"房间 {item.room_id}"
+        if item.rusername:
+            room_label = f"{room_label}，{item.rusername}"
+        parts.append((room_label, format_seconds_zh(elapsed)))
+
+    if len(parts) == 1:
+        room_label, duration = parts[0]
+        return f"本次预估观看时长: {duration} ({room_label})"
+    return "本次预估观看时长: " + " | ".join(
+        f"{room_label}: {duration}" for room_label, duration in parts
+    )
+
 
 def format_task_progress(progresses: list) -> str:
     if not progresses:
@@ -98,4 +135,3 @@ def clean_reward_message(message: str, skipped: bool) -> str:
             return "当前不可领取"
         return "领取失败"
     return cleaned
-
