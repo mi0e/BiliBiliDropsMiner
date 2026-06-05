@@ -11,3 +11,5 @@ nuitka-crash-report.xml
 *.har
 *.exe
 config.json
+AGENTS.md
+tests/
