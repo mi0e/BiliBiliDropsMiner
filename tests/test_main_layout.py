@@ -5,6 +5,7 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QMainWindow, QPushButton
 
 from bilibili_drops_miner.gui_parts.main_layout import (
@@ -69,6 +70,8 @@ class MainLayoutTest(unittest.TestCase):
         self.assertEqual(widgets.progress_bar.maximum(), 1)
         self.assertEqual(widgets.task_text.toPlainText(), "点击“手动刷新”查看任务进度")
         self.assertEqual(widgets.claim_rewards_btn.text(), "领取奖励")
+        self.assertEqual(widgets.account_status_label.text(), "账号：未填写 Cookie")
+        self.assertEqual(widgets.account_status_label.textFormat(), Qt.PlainText)
         self.assertEqual(widgets.log_toggle_btn.text(), "▶ 运行日志")
         self.assertFalse(widgets.log_text.isVisible())
 

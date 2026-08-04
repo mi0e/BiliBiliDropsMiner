@@ -58,6 +58,7 @@ class MainWindowWidgets:
     log_card: QFrame
     log_toggle_btn: QPushButton
     claim_rewards_btn: QPushButton
+    account_status_label: QLabel
 
 
 def build_main_window_layout(
@@ -179,6 +180,10 @@ def build_main_window_layout(
     task_title.setFont(task_title_font)
     task_title.setStyleSheet("color:#f5f6f8;")
     task_header.addWidget(task_title)
+    account_status_label = QLabel("账号：未填写 Cookie")
+    account_status_label.setTextFormat(Qt.PlainText)
+    account_status_label.setStyleSheet("color:#9aa0a6;")
+    task_header.addWidget(account_status_label)
     task_header.addStretch(1)
     claim_rewards_btn = _make_button("领取奖励", "blue", callbacks.claim_rewards)
     task_header.addWidget(claim_rewards_btn)
@@ -251,6 +256,7 @@ def build_main_window_layout(
         log_card=log_card,
         log_toggle_btn=log_toggle_btn,
         claim_rewards_btn=claim_rewards_btn,
+        account_status_label=account_status_label,
     )
 
 

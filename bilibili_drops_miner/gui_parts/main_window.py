@@ -18,6 +18,10 @@ from PySide6.QtWidgets import (
 
 from bilibili_drops_miner.config import MinerConfig
 from bilibili_drops_miner.gui_parts.app_style import configure_qt_app
+from bilibili_drops_miner.gui_parts.account_status import (
+    AccountStatus,
+    AccountStatusController,
+)
 from bilibili_drops_miner.gui_parts.browser_actions import BrowserActions
 from bilibili_drops_miner.gui_parts.config_io import (
     GuiConfigValues,
@@ -88,9 +92,21 @@ class MinerGUI(QMainWindow):
         self._task_progress_pending: bool = False
         self._task_refresh_trigger_pending: bool = False
         self._qr_login_dialog: QrLoginDialog | None = None
+        self._account_status = AccountStatus("empty", "")
+        self._running_account_uid: int | None = None
+        self._account_auto_stop_requested = False
         self.ui_call.connect(self._on_ui_call, Qt.QueuedConnection)
 
         self._build_layout()
+        self.account_status_controller = AccountStatusController(
+            self,
+            get_cookie=lambda: self.cookie_edit.text(),
+            on_status=self._on_account_status,
+        )
+        self.cookie_edit.textChanged.connect(
+            self.account_status_controller.cookie_changed
+        )
+        self.account_status_controller.cookie_changed()
         self.browser_actions = BrowserActions(
             parent=self,
             show_warning=self._show_warning,
@@ -175,6 +191,7 @@ class MinerGUI(QMainWindow):
         self.log_card = widgets.log_card
         self._log_toggle_btn = widgets.log_toggle_btn
         self.claim_rewards_btn = widgets.claim_rewards_btn
+        self.account_status_label = widgets.account_status_label
         self._log_expanded = False
 
     # ---------- local GUI state ----------
@@ -337,10 +354,23 @@ class MinerGUI(QMainWindow):
         except Exception as exc:
             self._show_error("配置错误", str(exc))
             return
+        account = self._account_status
+        if account.cookie != config.cookie or account.kind != "valid" or account.uid is None:
+            messages = {
+                "empty": "请先填写 Cookie，并等待账号校验通过。",
+                "checking": "Cookie 正在校验，请稍候再启动。",
+                "invalid": "Cookie 已失效，请重新登录后再启动。",
+                "error": "Cookie 校验失败，请检查网络后重试。",
+            }
+            message = messages.get(account.kind, "当前 Cookie 尚未校验通过。")
+            self._show_warning("无法启动", message)
+            return
         if not self.worker_controller.start(config, logger=logger):
             self._show_info("运行中", "助手已在运行中。")
             return
         logger.info("掉宝助手已启动")
+        self._running_account_uid = account.uid
+        self._account_auto_stop_requested = False
         self.task_controller.reset_live_watch_time()
         self._set_live_watch_time_text("本次预估观看时长: 0秒")
         self._start_progress_animation()
@@ -365,6 +395,15 @@ class MinerGUI(QMainWindow):
         result = self.worker_controller.poll_shutdown(logger=logger)
         if result in {"no_thread", "stopped"}:
             self._stop_poll_timer.stop()
+            self._finalize_runtime_ui()
+
+    def _finalize_runtime_ui(self) -> None:
+        self._stop_progress_animation()
+        self._config_sync_timer.stop()
+        self._task_refresh_timer.stop()
+        self._live_watch_time_timer.stop()
+        self.task_controller.stop_live_watch_time()
+        self._running_account_uid = None
 
     # ---------- progress bar (Qt-native indeterminate) ----------
 
@@ -457,6 +496,74 @@ class MinerGUI(QMainWindow):
     def _apply_auto_cookie(self, cookie_str: str) -> None:
         self.cookie_edit.setText(cookie_str)
 
+    # ---------- account status ----------
+
+    def _on_account_status(self, status: AccountStatus) -> None:
+        if status.kind == "empty" and self.worker_controller.is_running:
+            # Clearing a Cookie during a run is an invalidating action. Keep
+            # the persistent red warning after the automatic stop completes.
+            status = AccountStatus("invalid", "")
+        previous = self._account_status
+        if (
+            status.kind == "error"
+            and previous.kind == "invalid"
+            and previous.cookie == status.cookie
+        ):
+            # A temporary network failure cannot revoke an earlier definitive
+            # logged-out result or its persistent red warning.
+            return
+        if (
+            status.kind == "error"
+            and previous.cookie == status.cookie
+            and previous.uid is not None
+        ):
+            status = AccountStatus(
+                "error", status.cookie, previous.uid, previous.uname
+            )
+        self._account_status = status
+
+        if status.kind == "valid":
+            identity = status.uname or f"UID {status.uid}"
+            text, color = f"账号：{identity}", "#62d995"
+        elif status.kind == "invalid":
+            text, color = "Cookie 已失效", "#ff5d68"
+        elif status.kind == "checking":
+            text, color = "账号：检测中…", "#f0b35b"
+        elif status.kind == "error":
+            if status.uid is not None:
+                identity = status.uname or f"UID {status.uid}"
+                text = f"账号：{identity}（检查失败）"
+            else:
+                text = "账号：检查失败（网络异常）"
+            color = "#f0b35b"
+        else:
+            text, color = "账号：未填写 Cookie", "#9aa0a6"
+        self.account_status_label.setText(text)
+        self.account_status_label.setStyleSheet(f"color:{color};")
+
+        if not self.worker_controller.is_running:
+            return
+        if status.kind in {"empty", "invalid"}:
+            self._auto_stop_for_account("Cookie 已失效，运行已自动停止。")
+            return
+        if status.kind != "valid" or status.uid is None:
+            return
+        if self._running_account_uid != status.uid:
+            self._auto_stop_for_account(
+                "检测到 Cookie 所属账号已变化，运行已自动停止，请重新启动。"
+            )
+            return
+        miner = self.worker_controller.miner
+        if miner is not None and status.cookie != miner.config.cookie:
+            miner.update_cookie(status.cookie)
+
+    def _auto_stop_for_account(self, message: str) -> None:
+        if self._account_auto_stop_requested:
+            return
+        self._account_auto_stop_requested = True
+        logging.getLogger(__name__).warning(message)
+        self.stop()
+
     def _apply_auto_task_ids(self, task_ids_str: str) -> None:
         self.task_ids_edit.setText(task_ids_str)
 
@@ -541,6 +648,13 @@ class MinerGUI(QMainWindow):
     def _sync_config_to_miner(self) -> None:
         worker = self.worker_controller
         miner = worker.miner
+        if worker.has_thread and not worker.is_running:
+            login_invalidated = bool(miner and miner.login_invalidated)
+            worker.poll_shutdown(logger=logging.getLogger(__name__))
+            self._finalize_runtime_ui()
+            if login_invalidated:
+                self.account_status_controller.mark_current_invalid()
+            return
         if miner is None:
             if worker.stop_signal_set or not worker.has_thread:
                 self._config_sync_timer.stop()
@@ -571,10 +685,6 @@ class MinerGUI(QMainWindow):
         if new_task_ids != config.task_ids:
             config.task_ids = new_task_ids
 
-        new_cookie = self.cookie_edit.text().strip()
-        if new_cookie and new_cookie != config.cookie:
-            miner.update_cookie(new_cookie)
-
         new_notify_urls = parse_task_ids(self.notify_urls_edit.text().strip())
         if new_notify_urls != config.notify_urls:
             miner.update_notifier(new_notify_urls)
@@ -595,6 +705,7 @@ class MinerGUI(QMainWindow):
             dialog.cancel_session()
             dialog.close()
             self._qr_login_dialog = None
+        self.account_status_controller.close()
         self._ui_alive = False
         try:
             self.stop()
