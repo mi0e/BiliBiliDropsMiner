@@ -5,7 +5,7 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QMainWindow
+from PySide6.QtWidgets import QApplication, QMainWindow, QPushButton
 
 from bilibili_drops_miner.gui_parts.main_layout import (
     MainWindowCallbacks,
@@ -25,8 +25,10 @@ class MainLayoutTest(unittest.TestCase):
 
     def test_build_main_window_layout_returns_expected_widgets(self) -> None:
         window = QMainWindow()
+        cookie_actions: list[str] = []
         callbacks = MainWindowCallbacks(
-            auto_fetch_cookie=_noop,
+            qr_login_cookie=lambda: cookie_actions.append("qr"),
+            auto_fetch_cookie=lambda: cookie_actions.append("browser"),
             auto_fetch_room_id=_noop,
             auto_fetch_task_ids=_noop,
             start=_noop,
@@ -69,6 +71,21 @@ class MainLayoutTest(unittest.TestCase):
         self.assertEqual(widgets.claim_rewards_btn.text(), "领取奖励")
         self.assertEqual(widgets.log_toggle_btn.text(), "▶ 运行日志")
         self.assertFalse(widgets.log_text.isVisible())
+
+        cookie_buttons = {
+            button.text(): button
+            for button in window.centralWidget().findChildren(QPushButton)
+            if button.text() in {"扫码登录", "自动获取"}
+        }
+        self.assertIn("扫码登录", cookie_buttons)
+        cookie_buttons["扫码登录"].click()
+        # There are three “自动获取” buttons. The purple cookie button is the
+        # one whose click invokes the cookie callback.
+        for button in window.centralWidget().findChildren(QPushButton):
+            if button.text() == "自动获取" and "a78bfa" in button.styleSheet():
+                button.click()
+                break
+        self.assertEqual(cookie_actions, ["qr", "browser"])
 
         window.close()
 

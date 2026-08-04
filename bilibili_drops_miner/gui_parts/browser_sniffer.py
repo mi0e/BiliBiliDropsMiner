@@ -10,6 +10,7 @@ from collections.abc import Callable, Iterable
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, Literal
 
+from bilibili_drops_miner.client_parts.qr_login import LOGIN_COOKIE_NAMES
 from bilibili_drops_miner.gui_parts.browser_utils import (
     browser_label,
     browser_try_order,
@@ -28,17 +29,6 @@ CookiesCallback = Callable[[list[dict[str, Any]]], None]
 PageUrlCallback = Callable[[int], None]
 PageHtmlCallback = Callable[[str, str], bool]
 ErrorCallback = Callable[[str, str], None]
-
-LOGIN_COOKIE_NAMES = {
-    "SESSDATA",
-    "bili_jct",
-    "DedeUserID",
-    "DedeUserID__ckMd5",
-    "buvid3",
-    "b_nut",
-    "sid",
-}
-
 
 def classify_sniff_payload(data: dict[str, Any]) -> tuple[SniffPayloadKind, Any]:
     if data.get("type") == "__bili_cookies__":

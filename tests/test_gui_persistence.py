@@ -10,7 +10,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication, QFileDialog
+from PySide6.QtWidgets import QApplication, QDialog, QFileDialog
 
 from bilibili_drops_miner.gui_parts.app_style import configure_qt_app
 from bilibili_drops_miner.gui_parts.config_io import save_config_data
@@ -173,6 +173,46 @@ class GuiPersistenceTests(unittest.TestCase):
                 self.assertEqual(payload["cookie"], "SESSDATA=test; bili_jct=test")
             finally:
                 window.close()
+
+    def test_qr_login_is_wired_to_cookie_field_and_window_close_cancels(self) -> None:
+        instances = []
+
+        class FakeQrLoginDialog(QDialog):
+            def __init__(self, parent, apply_cookie) -> None:
+                super().__init__(parent)
+                self.apply_cookie = apply_cookie
+                self.started = False
+                self.cancelled = False
+                instances.append(self)
+
+            def start_session(self) -> None:
+                self.started = True
+
+            def cancel_session(self) -> None:
+                self.cancelled = True
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "bilibili_drops_miner.gui_parts.main_window.QrLoginDialog",
+            FakeQrLoginDialog,
+        ):
+            window = MinerGUI(gui_state=self._state_for(temp_dir))
+            window.qr_login_cookie()
+            dialog = instances[0]
+
+            self.assertTrue(dialog.started)
+            self.assertIs(dialog.parent(), window)
+            dialog.apply_cookie("SESSDATA=session; bili_jct=csrf; DedeUserID=42")
+            self.assertEqual(
+                window.cookie_edit.text(),
+                "SESSDATA=session; bili_jct=csrf; DedeUserID=42",
+            )
+
+            # A visible session is reused instead of starting a second one.
+            window.qr_login_cookie()
+            self.assertEqual(len(instances), 1)
+
+            window.close()
+            self.assertTrue(dialog.cancelled)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 httpx
+qrcode>=7.4,<9
 colorama
 PySide6
 apprise

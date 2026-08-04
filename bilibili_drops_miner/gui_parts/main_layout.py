@@ -27,6 +27,7 @@ from bilibili_drops_miner.gui_parts.styles import CARD_STYLE, BUTTON_STYLES
 
 @dataclass(slots=True)
 class MainWindowCallbacks:
+    qr_login_cookie: Callable[..., None]
     auto_fetch_cookie: Callable[..., None]
     auto_fetch_room_id: Callable[..., None]
     auto_fetch_task_ids: Callable[..., None]
@@ -95,21 +96,24 @@ def build_main_window_layout(
         _build_labeled_row(
             "Cookie",
             cookie_edit,
-            ("自动获取", "purple", callbacks.auto_fetch_cookie),
+            (
+                ("扫码登录", "blue", callbacks.qr_login_cookie),
+                ("自动获取", "purple", callbacks.auto_fetch_cookie),
+            ),
         )
     )
     config_layout.addLayout(
         _build_labeled_row(
             "房间号",
             rooms_edit,
-            ("自动获取", "blue", callbacks.auto_fetch_room_id),
+            (("自动获取", "blue", callbacks.auto_fetch_room_id),),
         )
     )
     config_layout.addLayout(
         _build_labeled_row(
             "任务 ID",
             task_ids_edit,
-            ("自动获取", "blue", callbacks.auto_fetch_task_ids),
+            (("自动获取", "blue", callbacks.auto_fetch_task_ids),),
         )
     )
     config_layout.addLayout(_build_labeled_row("通知 URL", notify_urls_edit))
@@ -277,7 +281,7 @@ def _make_button(text: str, color: str, slot: Callable[..., None]) -> QPushButto
 def _build_labeled_row(
     label: str,
     editor: QLineEdit,
-    extra_button: tuple[str, str, Callable[..., None]] | None = None,
+    extra_buttons: tuple[tuple[str, str, Callable[..., None]], ...] = (),
 ) -> QHBoxLayout:
     row = QHBoxLayout()
     row.setSpacing(8)
@@ -288,9 +292,8 @@ def _build_labeled_row(
     row.addWidget(lab)
     editor.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
     row.addWidget(editor, 1)
-    if extra_button is not None:
-        text, color, slot = extra_button
+    for text, color, slot in extra_buttons:
         button = _make_button(text, color, slot)
-        button.setMinimumWidth(100)
+        button.setMinimumWidth(90)
         row.addWidget(button)
     return row

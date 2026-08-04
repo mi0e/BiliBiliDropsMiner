@@ -32,6 +32,7 @@ from bilibili_drops_miner.gui_parts.main_layout import (
     MainWindowCallbacks,
     build_main_window_layout,
 )
+from bilibili_drops_miner.gui_parts.qr_login_dialog import QrLoginDialog
 from bilibili_drops_miner.gui_parts.task_controller import TaskController
 from bilibili_drops_miner.gui_parts.update_checker import (
     check_latest_release,
@@ -86,6 +87,7 @@ class MinerGUI(QMainWindow):
         self._live_watch_time_result: str = ""
         self._task_progress_pending: bool = False
         self._task_refresh_trigger_pending: bool = False
+        self._qr_login_dialog: QrLoginDialog | None = None
         self.ui_call.connect(self._on_ui_call, Qt.QueuedConnection)
 
         self._build_layout()
@@ -144,6 +146,7 @@ class MinerGUI(QMainWindow):
         widgets = build_main_window_layout(
             self,
             MainWindowCallbacks(
+                qr_login_cookie=self.qr_login_cookie,
                 auto_fetch_cookie=self.auto_fetch_cookie,
                 auto_fetch_room_id=self.auto_fetch_room_id,
                 auto_fetch_task_ids=self.auto_fetch_task_ids,
@@ -495,6 +498,24 @@ class MinerGUI(QMainWindow):
     def auto_fetch_cookie(self) -> None:
         self.browser_actions.auto_fetch_cookie()
 
+    def qr_login_cookie(self) -> None:
+        dialog = self._qr_login_dialog
+        if dialog is not None and dialog.isVisible():
+            dialog.raise_()
+            dialog.activateWindow()
+            return
+
+        dialog = QrLoginDialog(self, self._apply_auto_cookie)
+        self._qr_login_dialog = dialog
+
+        def clear_dialog(_result: int, current: QrLoginDialog = dialog) -> None:
+            if self._qr_login_dialog is current:
+                self._qr_login_dialog = None
+
+        dialog.finished.connect(clear_dialog)
+        dialog.show()
+        dialog.start_session()
+
     def _schedule_task_refresh(self) -> None:
         if (
             self.worker_controller.stop_signal_set
@@ -569,6 +590,11 @@ class MinerGUI(QMainWindow):
             self._gui_state.sync()
         except Exception:
             logging.getLogger(__name__).exception("保存 GUI 状态失败")
+        dialog = self._qr_login_dialog
+        if dialog is not None:
+            dialog.cancel_session()
+            dialog.close()
+            self._qr_login_dialog = None
         self._ui_alive = False
         try:
             self.stop()
