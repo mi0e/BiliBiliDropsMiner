@@ -126,6 +126,7 @@ class MinerGUI(QMainWindow):
             set_live_watch_time_text=self._set_live_watch_time_text,
             complete_task_refresh=self._complete_task_refresh,
             post_ui_task=self._post_ui_task,
+            get_auto_claim_enabled=lambda: self.auto_claim_rewards_check.isChecked(),
         )
         self._install_logging()
         self._restore_window_geometry()
@@ -191,6 +192,7 @@ class MinerGUI(QMainWindow):
         self.log_card = widgets.log_card
         self._log_toggle_btn = widgets.log_toggle_btn
         self.claim_rewards_btn = widgets.claim_rewards_btn
+        self.auto_claim_rewards_check = widgets.auto_claim_rewards_check
         self.account_status_label = widgets.account_status_label
         self._log_expanded = False
 
@@ -726,6 +728,7 @@ class MinerGUI(QMainWindow):
         self.task_interval_edit.setText(values.task_query_interval_text)
         self.notify_urls_edit.setText(values.notify_urls_text)
         self.disable_task_notify_check.setChecked(not values.notify_on_task_complete)
+        self.auto_claim_rewards_check.setChecked(values.auto_claim_rewards)
         self.verbose_check.setChecked(values.verbose)
 
     def _load_config_path(
@@ -791,7 +794,11 @@ class MinerGUI(QMainWindow):
             config = self._build_config()
             save_config_data(
                 path,
-                build_config_payload(config, verbose=self.verbose_check.isChecked()),
+                build_config_payload(
+                    config,
+                    verbose=self.verbose_check.isChecked(),
+                    auto_claim_rewards=self.auto_claim_rewards_check.isChecked(),
+                ),
             )
             self._gui_state.set_last_config_path(path)
             self._gui_state.sync()

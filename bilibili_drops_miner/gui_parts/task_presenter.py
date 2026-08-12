@@ -89,6 +89,8 @@ def _progress_bar(percent: int) -> str:
 
 
 def _status_text(item, percent: int) -> str:
+    if getattr(item, "status", None) == 6:
+        return "✔ 已领取"
     if getattr(item, "is_completed", False):
         return "✔ 完成"
     return f"{percent:>3}%"

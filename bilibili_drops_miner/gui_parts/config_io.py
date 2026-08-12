@@ -19,6 +19,7 @@ class GuiConfigValues:
     notify_urls_text: str
     notify_on_task_complete: bool
     verbose: bool
+    auto_claim_rewards: bool = False
 
 
 def load_config_data(path: str | Path) -> dict[str, Any]:
@@ -38,11 +39,17 @@ def values_from_config_data(data: dict[str, Any]) -> GuiConfigValues:
         task_query_interval_text=str(data.get("task_query_interval_seconds", 30)),
         notify_urls_text=",".join(str(x) for x in data.get("notify_urls", [])),
         notify_on_task_complete=bool(data.get("notify_on_task_complete", True)),
+        auto_claim_rewards=bool(data.get("auto_claim_rewards", False)),
         verbose=bool(data.get("verbose", False)),
     )
 
 
-def build_config_payload(config: MinerConfig, *, verbose: bool) -> dict[str, Any]:
+def build_config_payload(
+    config: MinerConfig,
+    *,
+    verbose: bool,
+    auto_claim_rewards: bool,
+) -> dict[str, Any]:
     return {
         "cookie": config.cookie,
         "room_ids": config.room_ids,
@@ -53,6 +60,7 @@ def build_config_payload(config: MinerConfig, *, verbose: bool) -> dict[str, Any
         "task_query_interval_seconds": config.task_query_interval_seconds,
         "notify_urls": config.notify_urls,
         "notify_on_task_complete": config.notify_on_task_complete,
+        "auto_claim_rewards": auto_claim_rewards,
         "verbose": verbose,
     }
 

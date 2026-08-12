@@ -58,6 +58,7 @@ class MainWindowWidgets:
     log_card: QFrame
     log_toggle_btn: QPushButton
     claim_rewards_btn: QPushButton
+    auto_claim_rewards_check: QCheckBox
     account_status_label: QLabel
 
 
@@ -185,6 +186,11 @@ def build_main_window_layout(
     account_status_label.setStyleSheet("color:#9aa0a6;")
     task_header.addWidget(account_status_label)
     task_header.addStretch(1)
+    auto_claim_rewards_check = QCheckBox("自动领取")
+    auto_claim_rewards_check.setToolTip(
+        "检测到任务达到 100% 后自动领取；领取失败会在后续刷新时重试"
+    )
+    task_header.addWidget(auto_claim_rewards_check)
     claim_rewards_btn = _make_button("领取奖励", "blue", callbacks.claim_rewards)
     task_header.addWidget(claim_rewards_btn)
     task_header.addWidget(_make_button("手动刷新", "", callbacks.refresh_tasks))
@@ -256,6 +262,7 @@ def build_main_window_layout(
         log_card=log_card,
         log_toggle_btn=log_toggle_btn,
         claim_rewards_btn=claim_rewards_btn,
+        auto_claim_rewards_check=auto_claim_rewards_check,
         account_status_label=account_status_label,
     )
 

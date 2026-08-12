@@ -13,7 +13,10 @@ from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication, QDialog, QFileDialog
 
 from bilibili_drops_miner.gui_parts.app_style import configure_qt_app
-from bilibili_drops_miner.gui_parts.config_io import save_config_data
+from bilibili_drops_miner.gui_parts.config_io import (
+    save_config_data,
+    values_from_config_data,
+)
 from bilibili_drops_miner.gui_parts.gui_state import GuiStateStore
 from bilibili_drops_miner.gui_parts.main_window import MinerGUI
 
@@ -44,8 +47,15 @@ class GuiPersistenceTests(unittest.TestCase):
             "task_query_interval_seconds": 42,
             "notify_urls": ["gotify://example.invalid/token"],
             "notify_on_task_complete": False,
+            "auto_claim_rewards": True,
             "verbose": True,
         }
+
+    def test_legacy_config_defaults_auto_claim_to_disabled(self) -> None:
+        payload = self._config_payload()
+        payload.pop("auto_claim_rewards")
+
+        self.assertFalse(values_from_config_data(payload).auto_claim_rewards)
 
     def test_first_launch_geometry_intersects_primary_screen(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -102,6 +112,7 @@ class GuiPersistenceTests(unittest.TestCase):
                     "gotify://example.invalid/token",
                 )
                 self.assertTrue(window.disable_task_notify_check.isChecked())
+                self.assertTrue(window.auto_claim_rewards_check.isChecked())
                 self.assertTrue(window.verbose_check.isChecked())
             finally:
                 window.close()
@@ -160,6 +171,7 @@ class GuiPersistenceTests(unittest.TestCase):
             state = self._state_for(temp_dir)
             window = MinerGUI(gui_state=state)
             window.cookie_edit.setText("SESSDATA=test; bili_jct=test")
+            window.auto_claim_rewards_check.setChecked(True)
             try:
                 with patch.object(
                     QFileDialog,
@@ -171,6 +183,7 @@ class GuiPersistenceTests(unittest.TestCase):
                 self.assertEqual(state.last_config_path(), config_path.resolve())
                 payload = json.loads(config_path.read_text(encoding="utf-8"))
                 self.assertEqual(payload["cookie"], "SESSDATA=test; bili_jct=test")
+                self.assertTrue(payload["auto_claim_rewards"])
             finally:
                 window.close()
 

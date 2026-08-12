@@ -11,5 +11,6 @@
     "wxwork://corpid/agentid/secret/?to=@all",
     "schan://SendKey"
   ],
-  "notify_on_task_complete": true
+  "notify_on_task_complete": true,
+  "auto_claim_rewards": false
 }
