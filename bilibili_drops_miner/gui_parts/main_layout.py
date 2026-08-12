@@ -51,6 +51,7 @@ class MainWindowWidgets:
     reconnect_edit: QLineEdit
     task_interval_edit: QLineEdit
     verbose_check: QCheckBox
+    enable_web_heartbeat_check: QCheckBox
     disable_task_notify_check: QCheckBox
     progress_bar: QProgressBar
     task_text: QPlainTextEdit
@@ -124,6 +125,8 @@ def build_main_window_layout(
     reconnect_edit = _make_small_edit("8")
     task_interval_edit = _make_small_edit("30")
     verbose_check = QCheckBox("详细日志")
+    enable_web_heartbeat_check = QCheckBox("启用网页观看心跳")
+    enable_web_heartbeat_check.setChecked(True)
     disable_task_notify_check = QCheckBox("禁用任务完成通知")
 
     num_row = QHBoxLayout()
@@ -140,6 +143,7 @@ def build_main_window_layout(
         num_row.addSpacing(6)
     num_row.addSpacing(6)
     num_row.addWidget(verbose_check)
+    num_row.addWidget(enable_web_heartbeat_check)
     num_row.addWidget(disable_task_notify_check)
     num_row.addStretch(1)
     config_layout.addLayout(num_row)
@@ -255,6 +259,7 @@ def build_main_window_layout(
         reconnect_edit=reconnect_edit,
         task_interval_edit=task_interval_edit,
         verbose_check=verbose_check,
+        enable_web_heartbeat_check=enable_web_heartbeat_check,
         disable_task_notify_check=disable_task_notify_check,
         progress_bar=progress_bar,
         task_text=task_text,

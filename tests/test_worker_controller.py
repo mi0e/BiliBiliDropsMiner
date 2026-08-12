@@ -51,6 +51,7 @@ class WorkerControllerTest(unittest.TestCase):
             self.assertTrue(miners[0].started.wait(timeout=1))
             self.assertTrue(controller.is_running)
             self.assertFalse(controller.start(object(), logger=logger))
+            self.assertFalse(controller.stop_signal_set)
 
             self.assertEqual(
                 controller.request_stop(logger=logger),
@@ -94,6 +95,22 @@ class WorkerControllerTest(unittest.TestCase):
         self.assertFalse(controller.has_thread)
         self.assertIsNone(controller.miner)
         self.assertFalse(controller.stopping_in_progress)
+
+    def test_start_waits_for_completed_worker_to_be_polled(self) -> None:
+        controller = WorkerController()
+        controller.worker_thread = FakeThread(alive=False)  # type: ignore[assignment]
+        controller.miner = FakeMiner(object())  # type: ignore[assignment]
+
+        with patch(
+            "bilibili_drops_miner.gui_parts.worker_controller.BilibiliWatchTimeMiner"
+        ) as miner_type:
+            self.assertFalse(
+                controller.start(
+                    object(), logger=logging.getLogger("test.worker_controller")
+                )
+            )
+        miner_type.assert_not_called()
+        self.assertIsNotNone(controller.miner)
 
     def test_poll_shutdown_auto_force_and_success_reset(self) -> None:
         controller = WorkerController(auto_force_stop_after_seconds=0.01)

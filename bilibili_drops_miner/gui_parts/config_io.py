@@ -20,6 +20,7 @@ class GuiConfigValues:
     notify_on_task_complete: bool
     verbose: bool
     auto_claim_rewards: bool = False
+    enable_web_heartbeat: bool = True
 
 
 def load_config_data(path: str | Path) -> dict[str, Any]:
@@ -40,6 +41,7 @@ def values_from_config_data(data: dict[str, Any]) -> GuiConfigValues:
         notify_urls_text=",".join(str(x) for x in data.get("notify_urls", [])),
         notify_on_task_complete=bool(data.get("notify_on_task_complete", True)),
         auto_claim_rewards=bool(data.get("auto_claim_rewards", False)),
+        enable_web_heartbeat=bool(data.get("enable_web_heartbeat", True)),
         verbose=bool(data.get("verbose", False)),
     )
 

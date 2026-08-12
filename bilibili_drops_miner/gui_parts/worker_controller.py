@@ -37,10 +37,13 @@ class WorkerController:
         return self.worker_thread is not None
 
     def start(self, config: MinerConfig, *, logger: logging.Logger) -> bool:
+        # A completed worker remains owned until the GUI poll finalizes it.
+        # Do not replace its miner reference in that small window.
+        if self.has_thread:
+            return False
+
         self.stop_signal_set = False
         self._reset_stop_state()
-        if self.is_running:
-            return False
 
         self.miner = BilibiliWatchTimeMiner(config)
 

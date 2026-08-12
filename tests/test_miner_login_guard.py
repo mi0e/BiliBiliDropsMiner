@@ -118,6 +118,34 @@ class MinerLoginGuardTest(unittest.TestCase):
         self.assertEqual(clients[0].cookie, "new-cookie")
         self.assertEqual(miner._clients, [])
 
+    def test_run_waits_until_all_session_threads_really_exit(self) -> None:
+        miner = BilibiliWatchTimeMiner(config())
+        miner._probe_login = AsyncMock(return_value=(42, "user"))
+        session_started = threading.Event()
+        release_session = threading.Event()
+
+        def thread_entry(*_args) -> None:
+            session_started.set()
+            release_session.wait(timeout=3)
+
+        run_thread = threading.Thread(target=miner.run)
+        with patch.object(miner, "_thread_entry", side_effect=thread_entry):
+            run_thread.start()
+            self.assertTrue(session_started.wait(timeout=1))
+            miner.stop(force=True)
+
+            # The owner must not return and let the GUI report stopped while a
+            # session is still alive after its bounded joins.
+            run_thread.join(timeout=0.4)
+            self.assertTrue(run_thread.is_alive())
+            self.assertTrue(any(thread.is_alive() for thread in miner._threads))
+
+            release_session.set()
+            run_thread.join(timeout=2)
+
+        self.assertFalse(run_thread.is_alive())
+        self.assertEqual(miner._threads, [])
+
 
 if __name__ == "__main__":
     unittest.main()

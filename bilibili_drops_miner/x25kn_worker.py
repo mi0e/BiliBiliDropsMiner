@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from typing import Any
 
 from bilibili_drops_miner.client import (
@@ -206,7 +207,7 @@ class X25KnWorker:
                                 task.limit_value,
                                 primary_only=True,
                             )
-                            self._send_task_complete_notification(task)
+                            self._dispatch_task_complete_notification(task)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -234,3 +235,14 @@ class X25KnWorker:
                 task.task_name,
                 primary_only=True,
             )
+
+    def _dispatch_task_complete_notification(self, task: TaskProgress) -> None:
+        # Notification adapters are synchronous and may wait on network
+        # timeouts. A daemon thread keeps them outside the session event loop;
+        # unlike asyncio's default executor, it also cannot delay loop shutdown.
+        threading.Thread(
+            target=self._send_task_complete_notification,
+            args=(task,),
+            name=f"notify-{self.room_id}-{task.task_id}",
+            daemon=True,
+        ).start()

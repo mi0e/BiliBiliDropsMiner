@@ -211,17 +211,32 @@ class BilibiliWatchTimeMiner:
         finally:
             self.stop(force=self._force_stop_requested)
             join_timeout = 1.2 if self._force_stop_requested else 3.0
-            for thread in self._threads:
-                thread.join(timeout=join_timeout)
+            next_warning_at = time.monotonic() + join_timeout
+            while True:
+                alive_threads = [
+                    thread for thread in self._threads if thread.is_alive()
+                ]
+                if not alive_threads:
+                    break
 
-            alive_threads = [thread.name for thread in self._threads if thread.is_alive()]
-            if alive_threads:
-                preview = ", ".join(alive_threads[:5])
-                if len(alive_threads) > 5:
-                    preview += f" ... 共 {len(alive_threads)} 个"
-                LOGGER.warning("停止未完成，仍有线程未退出: %s", preview)
-            else:
-                LOGGER.info("所有连接已停止")
+                # Keep the miner's owner thread alive until every session has
+                # released its client and event loop. The GUI polls this owner
+                # thread, so these short joins never block the GUI thread.
+                for thread in alive_threads:
+                    thread.join(timeout=0.2)
+
+                if time.monotonic() >= next_warning_at:
+                    alive_names = [
+                        thread.name for thread in alive_threads if thread.is_alive()
+                    ]
+                    if alive_names:
+                        preview = ", ".join(alive_names[:5])
+                        if len(alive_names) > 5:
+                            preview += f" ... 共 {len(alive_names)} 个"
+                        LOGGER.warning("停止未完成，仍有线程未退出: %s", preview)
+                    next_warning_at = time.monotonic() + join_timeout
+
+            LOGGER.info("所有连接已停止")
 
             self._threads.clear()
             with self._clients_lock:
