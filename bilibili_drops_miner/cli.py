@@ -18,11 +18,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "--reconnect-delay", type=int, default=8, help="Reconnect delay in seconds"
     )
     parser.add_argument(
-        "--disable-web-heartbeat",
-        action="store_true",
-        help="Disable x25Kn business heartbeat",
-    )
-    parser.add_argument(
         "--task-ids", default="", help="Task ids for progress monitoring"
     )
     parser.add_argument(
@@ -75,7 +70,6 @@ def main(argv: list[str] | None = None) -> int:
             room_ids=room_ids,
             thread_count=args.threads,
             reconnect_delay_seconds=args.reconnect_delay,
-            enable_web_heartbeat=not args.disable_web_heartbeat,
             task_ids=task_ids,
             task_query_interval_seconds=args.task_interval,
             notify_urls=notify_urls,

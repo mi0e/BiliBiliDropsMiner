@@ -11,7 +11,7 @@
 <details>
 <summary>点击展开 GUI 截图</summary>
 
-![GUI 截图](img/image_5.png)
+![Bilibili 直播掉宝助手 GUI](img/gui-preview.png)
 
 </details>
 
@@ -29,13 +29,14 @@
 
 > [!IMPORTANT]
 > **Disclaimer / 免责声明**
-> - 本项目仅供个人学习研究，不保证稳定性，不提供技术支持
+> - 本项目主要面向个人学习研究；软件授权范围以 MIT License 为准
+> - 不保证稳定性，不提供技术支持
 > - 使用本项目产生的一切后果由用户自行承担
-> - 禁止商业用途，请遵守版权及平台规定
-> - This project is for **personal learning and research purposes only**
+> - 使用、修改与分发须遵守 MIT License、第三方权利及平台规定
+> - This project is primarily intended for personal learning and research; the MIT License defines the software grant
 > - No stability guarantee or technical support provided
 > - Users are solely responsible for any consequences of using this project
-> - Commercial use is strictly prohibited
+> - Use, modification, and distribution are permitted under the MIT License; third-party rights and platform ToS still apply
 > - Please respect copyright and platform ToS
 
 ## 🔍 参数获取指南
@@ -202,7 +203,6 @@ Options:
    --rooms ROOMS                          		房间号，逗号分隔
    --threads THREADS                      		每房间会话数（可加速任务进度）
    --reconnect-delay RECONNECT_DELAY      		断线重连延迟（秒）
-   --disable-web-heartbeat                		关闭 x25Kn 业务心跳
    --task-ids TASK_IDS                    		用于进度监控的任务 ID
    --task-interval TASK_INTERVAL          		任务查询间隔（秒）
    --notify-urls NOTIFY_URLS              		通知 URL，逗号分隔
@@ -256,6 +256,6 @@ pip install -r requirements.txt
 
 ## 📄 License
 
-MIT
+本项目基于 [MIT License](LICENSE) 开源。
 
 ## 🥰 通过[爱发电](https://afdian.com/a/eriiiii)赞助

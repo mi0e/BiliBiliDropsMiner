@@ -116,13 +116,6 @@ class X25KnWorker:
         session: LiveTraceSession | None = None
         wait_seconds = 60
         while not self._stop_event.is_set():
-            if not self.config.enable_web_heartbeat:
-                session = None
-                try:
-                    await asyncio.wait_for(self._stop_event.wait(), timeout=5)
-                    return
-                except asyncio.TimeoutError:
-                    continue
             try:
                 if session is None:
                     await self.client.room_entry_action(self.room_id)

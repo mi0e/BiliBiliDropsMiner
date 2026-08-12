@@ -185,7 +185,6 @@ class MinerGUI(QMainWindow):
         self.reconnect_edit = widgets.reconnect_edit
         self.task_interval_edit = widgets.task_interval_edit
         self.verbose_check = widgets.verbose_check
-        self.enable_web_heartbeat_check = widgets.enable_web_heartbeat_check
         self.disable_task_notify_check = widgets.disable_task_notify_check
         self.progress_bar = widgets.progress_bar
         self.task_text = widgets.task_text
@@ -334,7 +333,6 @@ class MinerGUI(QMainWindow):
             room_ids=parse_room_ids(self.rooms_edit.text().strip()),
             thread_count=int(self.threads_edit.text().strip() or "1"),
             reconnect_delay_seconds=int(self.reconnect_edit.text().strip() or "8"),
-            enable_web_heartbeat=self.enable_web_heartbeat_check.isChecked(),
             task_ids=parse_task_ids(self.task_ids_edit.text().strip()),
             task_query_interval_seconds=int(
                 self.task_interval_edit.text().strip() or "30"
@@ -678,7 +676,6 @@ class MinerGUI(QMainWindow):
             pass
 
         config.notify_on_task_complete = not self.disable_task_notify_check.isChecked()
-        config.enable_web_heartbeat = self.enable_web_heartbeat_check.isChecked()
 
         verbose = self.verbose_check.isChecked()
         if verbose != self._last_verbose:
@@ -729,7 +726,6 @@ class MinerGUI(QMainWindow):
         self.task_ids_edit.setText(values.task_ids_text)
         self.task_interval_edit.setText(values.task_query_interval_text)
         self.notify_urls_edit.setText(values.notify_urls_text)
-        self.enable_web_heartbeat_check.setChecked(values.enable_web_heartbeat)
         self.disable_task_notify_check.setChecked(not values.notify_on_task_complete)
         self.auto_claim_rewards_check.setChecked(values.auto_claim_rewards)
         self.verbose_check.setChecked(values.verbose)

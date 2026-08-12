@@ -20,7 +20,6 @@ class GuiConfigValues:
     notify_on_task_complete: bool
     verbose: bool
     auto_claim_rewards: bool = False
-    enable_web_heartbeat: bool = True
 
 
 def load_config_data(path: str | Path) -> dict[str, Any]:
@@ -41,7 +40,6 @@ def values_from_config_data(data: dict[str, Any]) -> GuiConfigValues:
         notify_urls_text=",".join(str(x) for x in data.get("notify_urls", [])),
         notify_on_task_complete=bool(data.get("notify_on_task_complete", True)),
         auto_claim_rewards=bool(data.get("auto_claim_rewards", False)),
-        enable_web_heartbeat=bool(data.get("enable_web_heartbeat", True)),
         verbose=bool(data.get("verbose", False)),
     )
 
@@ -57,7 +55,6 @@ def build_config_payload(
         "room_ids": config.room_ids,
         "thread_count": config.thread_count,
         "reconnect_delay_seconds": config.reconnect_delay_seconds,
-        "enable_web_heartbeat": config.enable_web_heartbeat,
         "task_ids": config.task_ids,
         "task_query_interval_seconds": config.task_query_interval_seconds,
         "notify_urls": config.notify_urls,

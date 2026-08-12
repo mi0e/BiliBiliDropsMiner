@@ -64,10 +64,6 @@ class MainLayoutTest(unittest.TestCase):
         self.assertEqual(widgets.reconnect_edit.text(), "8")
         self.assertEqual(widgets.task_interval_edit.text(), "30")
         self.assertEqual(widgets.verbose_check.text(), "详细日志")
-        self.assertEqual(
-            widgets.enable_web_heartbeat_check.text(), "启用网页观看心跳"
-        )
-        self.assertTrue(widgets.enable_web_heartbeat_check.isChecked())
         self.assertEqual(widgets.disable_task_notify_check.text(), "禁用任务完成通知")
         self.assertEqual(widgets.auto_claim_rewards_check.text(), "自动领取")
         self.assertFalse(widgets.auto_claim_rewards_check.isChecked())

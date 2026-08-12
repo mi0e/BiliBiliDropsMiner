@@ -12,8 +12,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication, QDialog, QFileDialog
 
+from bilibili_drops_miner.config import MinerConfig
 from bilibili_drops_miner.gui_parts.app_style import configure_qt_app
 from bilibili_drops_miner.gui_parts.config_io import (
+    build_config_payload,
     save_config_data,
     values_from_config_data,
 )
@@ -42,7 +44,6 @@ class GuiPersistenceTests(unittest.TestCase):
             "room_ids": [123, 456],
             "thread_count": 3,
             "reconnect_delay_seconds": 11,
-            "enable_web_heartbeat": False,
             "task_ids": ["task-a", "task-b"],
             "task_query_interval_seconds": 42,
             "notify_urls": ["gotify://example.invalid/token"],
@@ -57,11 +58,19 @@ class GuiPersistenceTests(unittest.TestCase):
 
         self.assertFalse(values_from_config_data(payload).auto_claim_rewards)
 
-    def test_legacy_config_defaults_web_heartbeat_to_enabled(self) -> None:
-        payload = self._config_payload()
-        payload.pop("enable_web_heartbeat")
+    def test_legacy_web_heartbeat_field_is_ignored_and_not_saved(self) -> None:
+        legacy_payload = self._config_payload()
+        legacy_payload["enable_web_heartbeat"] = False
 
-        self.assertTrue(values_from_config_data(payload).enable_web_heartbeat)
+        values = values_from_config_data(legacy_payload)
+        self.assertEqual(values.rooms_text, "123,456")
+
+        saved_payload = build_config_payload(
+            MinerConfig(cookie=values.cookie, room_ids=[123, 456]),
+            verbose=values.verbose,
+            auto_claim_rewards=values.auto_claim_rewards,
+        )
+        self.assertNotIn("enable_web_heartbeat", saved_payload)
 
     def test_first_launch_geometry_intersects_primary_screen(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -118,7 +127,6 @@ class GuiPersistenceTests(unittest.TestCase):
                     "gotify://example.invalid/token",
                 )
                 self.assertTrue(window.disable_task_notify_check.isChecked())
-                self.assertFalse(window.enable_web_heartbeat_check.isChecked())
                 self.assertTrue(window.auto_claim_rewards_check.isChecked())
                 self.assertTrue(window.verbose_check.isChecked())
             finally:
@@ -178,7 +186,6 @@ class GuiPersistenceTests(unittest.TestCase):
             state = self._state_for(temp_dir)
             window = MinerGUI(gui_state=state)
             window.cookie_edit.setText("SESSDATA=test; bili_jct=test")
-            window.enable_web_heartbeat_check.setChecked(False)
             window.auto_claim_rewards_check.setChecked(True)
             try:
                 with patch.object(
@@ -191,7 +198,6 @@ class GuiPersistenceTests(unittest.TestCase):
                 self.assertEqual(state.last_config_path(), config_path.resolve())
                 payload = json.loads(config_path.read_text(encoding="utf-8"))
                 self.assertEqual(payload["cookie"], "SESSDATA=test; bili_jct=test")
-                self.assertFalse(payload["enable_web_heartbeat"])
                 self.assertTrue(payload["auto_claim_rewards"])
             finally:
                 window.close()
