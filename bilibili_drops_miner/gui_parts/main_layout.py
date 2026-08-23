@@ -30,7 +30,8 @@ class MainWindowCallbacks:
     qr_login_cookie: Callable[..., None]
     auto_fetch_cookie: Callable[..., None]
     auto_fetch_room_id: Callable[..., None]
-    auto_fetch_task_ids: Callable[..., None]
+    auto_fetch_task_ids_mode1: Callable[..., None]
+    auto_fetch_task_ids_mode2: Callable[..., None]
     start: Callable[..., None]
     stop: Callable[..., None]
     load_config: Callable[..., None]
@@ -91,7 +92,7 @@ def build_main_window_layout(
     cookie_edit = _make_line_edit("必填: SESSDATA=xxx; bili_jct=xxx; DedeUserID=xxx")
     rooms_edit = _make_line_edit("必填: 直播间号，多个用逗号分隔")
     rooms_edit.setText("23612045")
-    task_ids_edit = _make_line_edit("可留空: F12 从 totalv2 请求中提取 task_ids")
+    task_ids_edit = _make_line_edit("可留空: 可用静态解析或浏览器嗅探自动获取")
     notify_urls_edit = _make_line_edit("可留空: 通知 URL，如 gotify://host/token")
 
     config_layout.addLayout(
@@ -115,7 +116,10 @@ def build_main_window_layout(
         _build_labeled_row(
             "任务 ID",
             task_ids_edit,
-            (("自动获取", "blue", callbacks.auto_fetch_task_ids),),
+            (
+                ("自动获取模式1", "blue", callbacks.auto_fetch_task_ids_mode1),
+                ("自动获取模式2", "purple", callbacks.auto_fetch_task_ids_mode2),
+            ),
         )
     )
     config_layout.addLayout(_build_labeled_row("通知 URL", notify_urls_edit))

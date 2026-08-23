@@ -61,6 +61,7 @@ def start_browser_sniff(
     url_keyword: str | None,
     hint: str,
     *,
+    start_url: str | None = None,
     on_error: ErrorCallback,
     on_network_match: NetworkCallback | None = None,
     on_cookies: CookiesCallback | None = None,
@@ -190,7 +191,7 @@ def start_browser_sniff(
                     f"\n最后错误: {last_exc}"
                 )
 
-            driver.get("https://www.bilibili.com/")
+            driver.get(start_url or "https://www.bilibili.com/")
             logger.info("%s（浏览器: %s）", hint, browser_label(browser_type or ""))
 
             cookie_done = False

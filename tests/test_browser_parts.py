@@ -172,6 +172,13 @@ class BrowserSnifferTest(unittest.TestCase):
 
 
 class BrowserActionsTest(unittest.TestCase):
+    class _ImmediateThread:
+        def __init__(self, *, target, **_kwargs) -> None:
+            self.target = target
+
+        def start(self) -> None:
+            self.target()
+
     def _build_actions(self) -> tuple[BrowserActions, dict[str, list]]:
         events: dict[str, list] = {
             "warnings": [],
@@ -240,6 +247,52 @@ class BrowserActionsTest(unittest.TestCase):
 
         self.assertEqual(events["errors"], [("错误", "浏览器启动失败")])
 
+    def test_auto_fetch_task_ids_mode1_posts_static_groups_without_sniff(self) -> None:
+        actions, _events = self._build_actions()
+        groups = [{"label": "今天", "task_ids": ["task-a"], "active": True}]
+
+        with patch(
+            "bilibili_drops_miner.gui_parts.browser_actions.fetch_live_task_groups",
+            return_value=groups,
+        ) as fetch, patch(
+            "bilibili_drops_miner.gui_parts.browser_actions.threading.Thread",
+            self._ImmediateThread,
+        ), patch.object(
+            actions, "apply_selected_task_group"
+        ) as apply_group, patch.object(
+            actions, "browser_sniff"
+        ) as browser_sniff:
+            actions.auto_fetch_task_ids_mode1(23612045)
+
+        fetch.assert_called_once_with(23612045)
+        apply_group.assert_called_once_with(23612045, groups)
+        browser_sniff.assert_not_called()
+
+    def test_auto_fetch_task_ids_mode1_suggests_mode2_on_empty_or_error(self) -> None:
+        actions, events = self._build_actions()
+
+        with patch(
+            "bilibili_drops_miner.gui_parts.browser_actions.threading.Thread",
+            self._ImmediateThread,
+        ), patch(
+            "bilibili_drops_miner.gui_parts.browser_actions.fetch_live_task_groups",
+            return_value=[],
+        ):
+            actions.auto_fetch_task_ids_mode1(23612045)
+
+        with patch(
+            "bilibili_drops_miner.gui_parts.browser_actions.threading.Thread",
+            self._ImmediateThread,
+        ), patch(
+            "bilibili_drops_miner.gui_parts.browser_actions.fetch_live_task_groups",
+            side_effect=RuntimeError("sensitive response body"),
+        ):
+            actions.auto_fetch_task_ids_mode1(23612045)
+
+        self.assertIn("模式2", events["warnings"][0][1])
+        self.assertIn("模式2", events["errors"][0][1])
+        self.assertNotIn("sensitive", events["errors"][0][1])
+
     def test_auto_fetch_task_ids_handles_network_payload(self) -> None:
         actions, events = self._build_actions()
 
@@ -250,7 +303,7 @@ class BrowserActionsTest(unittest.TestCase):
             BrowserActions,
             "browser_sniff",
         ) as browser_sniff:
-            actions.auto_fetch_task_ids()
+            actions.auto_fetch_task_ids_mode2()
 
         self.assertEqual(browser_sniff.call_args.kwargs["browser_preference"], "chrome")
         self.assertTrue(browser_sniff.call_args.kwargs["finish_on_any"])
@@ -267,6 +320,25 @@ class BrowserActionsTest(unittest.TestCase):
 
         self.assertEqual(events["rooms"], [23612045])
         self.assertEqual(events["task_ids"], ["task-a,task-b"])
+
+    def test_auto_fetch_task_ids_uses_room_start_url_or_bilibili_home(self) -> None:
+        actions, _events = self._build_actions()
+
+        with patch(
+            "bilibili_drops_miner.gui_parts.browser_actions.QMessageBox.question",
+            return_value=QMessageBox.Ok,
+        ), patch.object(BrowserActions, "pick_browser", return_value="chrome"), patch.object(
+            BrowserActions,
+            "browser_sniff",
+        ) as browser_sniff:
+            actions.auto_fetch_task_ids_mode2(23612045)
+            self.assertEqual(
+                browser_sniff.call_args.kwargs["start_url"],
+                "https://live.bilibili.com/23612045",
+            )
+
+            actions.auto_fetch_task_ids_mode2()
+            self.assertIsNone(browser_sniff.call_args.kwargs["start_url"])
 
     def test_auto_fetch_cookie_applies_filtered_cookie_string(self) -> None:
         actions, events = self._build_actions()

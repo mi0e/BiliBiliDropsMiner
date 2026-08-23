@@ -95,6 +95,8 @@ class GuiParitySmokeTests(unittest.TestCase):
                 self.assertTrue(
                     {
                         "自动获取",
+                        "自动获取模式1",
+                        "自动获取模式2",
                         "启动",
                         "停止",
                         "加载配置",

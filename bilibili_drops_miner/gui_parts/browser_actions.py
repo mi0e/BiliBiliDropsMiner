@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 from typing import Any
 
 from PySide6.QtWidgets import QInputDialog, QMessageBox, QWidget
 
+from bilibili_drops_miner.client_parts.task_discovery import fetch_live_task_groups
 from bilibili_drops_miner.gui_parts.browser_sniffer import start_browser_sniff
 from bilibili_drops_miner.gui_parts.browser_utils import (
     available_browsers,
@@ -39,6 +41,8 @@ class BrowserActions:
         self._set_cookie = set_cookie
         self._set_task_ids = set_task_ids
         self._logger = logger or logging.getLogger(__name__)
+        self._task_discovery_lock = threading.Lock()
+        self._task_discovery_pending = False
 
     @staticmethod
     def find_browser(name: str) -> bool:
@@ -173,6 +177,7 @@ class BrowserActions:
         on_page_html: Callable[[str, str], bool] | None = None,
         browser_preference: str | None = None,
         finish_on_any: bool = False,
+        start_url: str | None = None,
     ) -> None:
         def on_error(title: str, message: str) -> None:
             self._post_ui_task(self._show_error, title, message)
@@ -187,6 +192,7 @@ class BrowserActions:
             on_page_html=on_page_html,
             browser_preference=browser_preference,
             finish_on_any=finish_on_any,
+            start_url=start_url,
             logger=self._logger,
         )
 
@@ -218,7 +224,53 @@ class BrowserActions:
             browser_preference=browser,
         )
 
-    def auto_fetch_task_ids(self) -> None:
+    def auto_fetch_task_ids_mode1(self, room_id: int) -> None:
+        with self._task_discovery_lock:
+            if self._task_discovery_pending:
+                self._post_ui_task(
+                    self._show_warning,
+                    "提示",
+                    "自动获取模式1正在执行，请稍候。",
+                )
+                return
+            self._task_discovery_pending = True
+
+        def worker() -> None:
+            try:
+                task_groups = fetch_live_task_groups(room_id)
+                if not task_groups:
+                    self._post_ui_task(
+                        self._show_warning,
+                        "提示",
+                        "自动获取模式1未解析到任务 ID，请尝试使用自动获取模式2。",
+                    )
+                    return
+                self._post_ui_task(
+                    self.apply_selected_task_group,
+                    room_id,
+                    task_groups,
+                )
+            except Exception as exc:
+                self._logger.warning(
+                    "自动获取模式1失败: %s",
+                    type(exc).__name__,
+                )
+                self._post_ui_task(
+                    self._show_error,
+                    "错误",
+                    "自动获取模式1失败，请检查网络后重试，或使用自动获取模式2。",
+                )
+            finally:
+                with self._task_discovery_lock:
+                    self._task_discovery_pending = False
+
+        threading.Thread(
+            target=worker,
+            name="task-id-static-discovery",
+            daemon=True,
+        ).start()
+
+    def auto_fetch_task_ids_mode2(self, room_id: int | None = None) -> None:
         ok = QMessageBox.question(
             self._parent,
             "无需登录，自动获取任务ID",
@@ -277,7 +329,16 @@ class BrowserActions:
             on_page_html=on_page_html,
             browser_preference=browser,
             finish_on_any=True,
+            start_url=(
+                f"https://live.bilibili.com/{room_id}"
+                if room_id is not None and room_id > 0
+                else None
+            ),
         )
+
+    def auto_fetch_task_ids(self, room_id: int | None = None) -> None:
+        """Backward-compatible alias for browser automation mode 2."""
+        self.auto_fetch_task_ids_mode2(room_id)
 
     def auto_fetch_cookie(self) -> None:
         ok = QMessageBox.question(

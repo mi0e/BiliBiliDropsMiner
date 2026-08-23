@@ -27,11 +27,13 @@ class MainLayoutTest(unittest.TestCase):
     def test_build_main_window_layout_returns_expected_widgets(self) -> None:
         window = QMainWindow()
         cookie_actions: list[str] = []
+        task_id_actions: list[str] = []
         callbacks = MainWindowCallbacks(
             qr_login_cookie=lambda: cookie_actions.append("qr"),
             auto_fetch_cookie=lambda: cookie_actions.append("browser"),
             auto_fetch_room_id=_noop,
-            auto_fetch_task_ids=_noop,
+            auto_fetch_task_ids_mode1=lambda: task_id_actions.append("mode1"),
+            auto_fetch_task_ids_mode2=lambda: task_id_actions.append("mode2"),
             start=_noop,
             stop=_noop,
             load_config=_noop,
@@ -54,7 +56,7 @@ class MainLayoutTest(unittest.TestCase):
         self.assertEqual(widgets.rooms_edit.text(), "23612045")
         self.assertEqual(
             widgets.task_ids_edit.placeholderText(),
-            "可留空: F12 从 totalv2 请求中提取 task_ids",
+            "可留空: 可用静态解析或浏览器嗅探自动获取",
         )
         self.assertEqual(
             widgets.notify_urls_edit.placeholderText(),
@@ -85,13 +87,22 @@ class MainLayoutTest(unittest.TestCase):
         }
         self.assertIn("扫码登录", cookie_buttons)
         cookie_buttons["扫码登录"].click()
-        # There are three “自动获取” buttons. The purple cookie button is the
-        # one whose click invokes the cookie callback.
+        # The purple cookie button is the one whose click invokes the cookie callback.
         for button in window.centralWidget().findChildren(QPushButton):
             if button.text() == "自动获取" and "a78bfa" in button.styleSheet():
                 button.click()
                 break
         self.assertEqual(cookie_actions, ["qr", "browser"])
+
+        labels = {
+            button.text() for button in window.centralWidget().findChildren(QPushButton)
+        }
+        self.assertIn("自动获取模式1", labels)
+        self.assertIn("自动获取模式2", labels)
+        for button in window.centralWidget().findChildren(QPushButton):
+            if button.text() in {"自动获取模式1", "自动获取模式2"}:
+                button.click()
+        self.assertEqual(task_id_actions, ["mode1", "mode2"])
 
         window.close()
 

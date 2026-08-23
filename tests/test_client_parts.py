@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import unittest
 import urllib.parse
+
+import httpx
 
 from bilibili_drops_miner.client_parts.constants import WBI_MIXIN_KEY_ENC_TAB
 from bilibili_drops_miner.client_parts.cookies import (
@@ -20,6 +23,7 @@ from bilibili_drops_miner.client_parts.task_parsing import (
     coerce_task_number,
     extract_task_indicator_values,
 )
+from bilibili_drops_miner.client_parts.task_discovery import fetch_live_task_groups
 from bilibili_drops_miner.client_parts.wbi import (
     encode_query,
     parse_wbi_keys_from_nav,
@@ -28,6 +32,55 @@ from bilibili_drops_miner.client_parts.wbi import (
 
 
 class ClientPartsTest(unittest.TestCase):
+    def test_fetch_live_task_groups_follows_redirect_and_sets_headers(self) -> None:
+        requests: list[httpx.Request] = []
+        state = {
+            "EraTasklistPc": [{"tasklist": [{"taskId": "task-a"}]}],
+            "EvaPositionBox": [{"left": 0, "top": 0}],
+            "EvaTabs.Panel": [
+                {
+                    "id": "today",
+                    "tabItem": {"tabItemProps": {"textContent": {"content": "今天"}}},
+                }
+            ],
+            "EvaTabs": [{"activatedTabPanelId": "today"}],
+        }
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if request.url.path == "/23612045":
+                return httpx.Response(302, headers={"Location": "/redirected"})
+            return httpx.Response(
+                200,
+                text=f"<script>window.__initialState = {json.dumps(state)};</script>",
+            )
+
+        groups = fetch_live_task_groups(
+            23612045,
+            transport=httpx.MockTransport(handler),
+        )
+
+        self.assertEqual(
+            [request.url.path for request in requests],
+            ["/23612045", "/redirected"],
+        )
+        self.assertEqual(requests[0].headers["User-Agent"], DEFAULT_USER_AGENT)
+        self.assertEqual(requests[0].headers["Referer"], "https://live.bilibili.com/")
+        self.assertEqual(groups[0]["task_ids"], ["task-a"])
+
+    def test_fetch_live_task_groups_returns_empty_static_result(self) -> None:
+        transport = httpx.MockTransport(
+            lambda _request: httpx.Response(200, text="<html>no tasks</html>")
+        )
+        self.assertEqual(fetch_live_task_groups(1, transport=transport), [])
+
+    def test_fetch_live_task_groups_raises_for_http_error(self) -> None:
+        transport = httpx.MockTransport(
+            lambda _request: httpx.Response(503, text="upstream detail")
+        )
+        with self.assertRaises(httpx.HTTPStatusError):
+            fetch_live_task_groups(1, transport=transport)
+
     def test_task_completion_and_reward_status(self) -> None:
         self.assertTrue(
             TaskProgress(

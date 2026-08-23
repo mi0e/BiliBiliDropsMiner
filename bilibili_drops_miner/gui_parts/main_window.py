@@ -166,7 +166,8 @@ class MinerGUI(QMainWindow):
                 qr_login_cookie=self.qr_login_cookie,
                 auto_fetch_cookie=self.auto_fetch_cookie,
                 auto_fetch_room_id=self.auto_fetch_room_id,
-                auto_fetch_task_ids=self.auto_fetch_task_ids,
+                auto_fetch_task_ids_mode1=self.auto_fetch_task_ids_mode1,
+                auto_fetch_task_ids_mode2=self.auto_fetch_task_ids_mode2,
                 start=self.start,
                 stop=self.stop,
                 load_config=self.load_config,
@@ -600,8 +601,35 @@ class MinerGUI(QMainWindow):
     def auto_fetch_room_id(self) -> None:
         self.browser_actions.auto_fetch_room_id()
 
+    def auto_fetch_task_ids_mode1(self) -> None:
+        try:
+            room_ids = parse_room_ids(self.rooms_edit.text().strip())
+        except ValueError as exc:
+            self._show_warning(
+                "提示",
+                f"{exc}。请修正后重试模式1，或使用自动获取模式2。",
+            )
+            return
+        if not room_ids:
+            self._show_warning(
+                "提示",
+                "自动获取模式1需要先填写有效的直播间号；也可使用自动获取模式2。",
+            )
+            return
+        self.browser_actions.auto_fetch_task_ids_mode1(room_ids[0])
+
+    def auto_fetch_task_ids_mode2(self) -> None:
+        try:
+            room_ids = parse_room_ids(self.rooms_edit.text().strip())
+        except ValueError:
+            room_ids = []
+        self.browser_actions.auto_fetch_task_ids_mode2(
+            room_id=room_ids[0] if room_ids else None
+        )
+
     def auto_fetch_task_ids(self) -> None:
-        self.browser_actions.auto_fetch_task_ids()
+        """Backward-compatible alias for browser automation mode 2."""
+        self.auto_fetch_task_ids_mode2()
 
     def auto_fetch_cookie(self) -> None:
         self.browser_actions.auto_fetch_cookie()
