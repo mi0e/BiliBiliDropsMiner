@@ -16,12 +16,16 @@ on:
   workflow_dispatch:
     inputs:
       release:
-        description: '发布到 Release'
+        description: '发布类型 (none=仅构建 / preview=预览版 pre-release / stable=正式版)'
         required: true
-        type: boolean
-        default: false
+        type: choice
+        default: 'none'
+        options:
+          - none
+          - preview
+          - stable
       tag:
-        description: 'Release 版本号 (如 v1.0.0)'
+        description: '正式版版本号 (如 v1.0.0)，仅 stable 需要'
         required: false
         type: string
 
@@ -36,24 +40,33 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       update_channel: ${{ steps.version.outputs.update_channel }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
     steps:
       - name: Determine build version
         id: version
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.release }}" = "true" ]; then
+          release_type="${{ github.event.inputs.release }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "$release_type" = "stable" ]; then
             if [ -n "${{ github.event.inputs.tag }}" ]; then
               version="${{ github.event.inputs.tag }}"
             else
               version="v$(date +%Y%m%d.%H%M%S)"
             fi
             update_channel="release"
+            is_prerelease="false"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "$release_type" = "preview" ]; then
+            version="v${GITHUB_SHA::7}"
+            update_channel="dev"
+            is_prerelease="true"
           else
             version="dev-${GITHUB_SHA::7}"
             update_channel="dev"
+            is_prerelease="false"
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "update_channel=$update_channel" >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=$is_prerelease" >> "$GITHUB_OUTPUT"
 
   build-windows:
     name: Windows GUI (Nuitka)
@@ -156,7 +169,7 @@ jobs:
   release:
     name: Publish release
     needs: [prepare, build-windows, build-macos]
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.release == 'true'
+    if: github.event_name == 'workflow_dispatch' && (github.event.inputs.release == 'stable' || github.event.inputs.release == 'preview')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -167,10 +180,24 @@ jobs:
           path: dist/
           merge-multiple: true
 
+      - name: Check existing release
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "${{ needs.prepare.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Release ${{ needs.prepare.outputs.version }} already exists, skipping."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create Release
+        if: steps.existing.outputs.exists == 'false'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.prepare.outputs.version }}
           name: ${{ needs.prepare.outputs.version }}
           generate_release_notes: true
+          prerelease: ${{ needs.prepare.outputs.is_prerelease }}
           files: dist/*.zip
