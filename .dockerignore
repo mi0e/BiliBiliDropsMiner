@@ -1,0 +1,7 @@
+**
+!requirements-web.txt
+!bilibili_web.py
+!bilibili_drops_miner/
+!bilibili_drops_miner/**
+bilibili_drops_miner/**/__pycache__/
+bilibili_drops_miner/**/*.pyc

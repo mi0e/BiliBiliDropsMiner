@@ -1,0 +1,15 @@
+services:
+  miner:
+    build: .
+    ports:
+      - "127.0.0.1:23333:23333"
+    environment:
+      WEB_PASSWORD: ${WEB_PASSWORD:-}
+    volumes:
+      - miner-data:/data
+    restart: unless-stopped
+    stop_grace_period: 40s
+    init: true
+
+volumes:
+  miner-data:

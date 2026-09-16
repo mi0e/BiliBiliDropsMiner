@@ -13,3 +13,5 @@ nuitka-crash-report.xml
 config.json
 AGENTS.md
 .DS_Store
+web-data/
+.env

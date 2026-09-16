@@ -31,6 +31,7 @@ class BilibiliWatchTimeMiner:
         self._notifier = MultiPlatformNotifier(config.notify_urls)
         self._clients: list[BilibiliClient] = []
         self._clients_lock = threading.Lock()
+        self._session_tasks: set[asyncio.Task[None]] = set()
         self._force_stop_requested = False
         self._login_invalidated = threading.Event()
 
@@ -41,6 +42,12 @@ class BilibiliWatchTimeMiner:
     @property
     def login_invalidated(self) -> bool:
         return self._login_invalidated.is_set()
+
+    @property
+    def active_session_count(self) -> int:
+        """Count running session workers, excluding threads waiting for their stagger."""
+        with self._clients_lock:
+            return sum(not task.done() for task in self._session_tasks)
 
     def _build_session_plans(self) -> list[SessionPlan]:
         plans: list[SessionPlan] = []
@@ -94,6 +101,8 @@ class BilibiliWatchTimeMiner:
                 worker.run_forever(),
                 name=f"x25kn-{plan.room_id}-s{plan.session_no}",
             )
+            with self._clients_lock:
+                self._session_tasks.add(task)
             LOGGER.info("直播间 %s 连接 #%s 已启动", plan.room_id, plan.session_no)
 
             while not self._stop_event.is_set():
@@ -116,6 +125,8 @@ class BilibiliWatchTimeMiner:
                 await asyncio.gather(task, return_exceptions=True)
 
             with self._clients_lock:
+                if task is not None:
+                    self._session_tasks.discard(task)
                 if client in self._clients:
                     self._clients.remove(client)
 

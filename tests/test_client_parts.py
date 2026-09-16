@@ -15,6 +15,7 @@ from bilibili_drops_miner.client_parts.cookies import (
     build_mission_headers,
 )
 from bilibili_drops_miner.client_parts.models import MissionRewardInfo, TaskProgress
+from bilibili_drops_miner.client_parts.live import parse_room_title
 from bilibili_drops_miner.client_parts.profile import (
     parse_self_info,
     validate_nav_payload,
@@ -32,6 +33,13 @@ from bilibili_drops_miner.client_parts.wbi import (
 
 
 class ClientPartsTest(unittest.TestCase):
+    def test_room_title_parsing_does_not_require_live_area(self) -> None:
+        self.assertEqual(parse_room_title({"code": 0, "data": {"title": " 房间名 "}}), "房间名")
+        self.assertEqual(parse_room_title({"code": 0, "data": {}}), "")
+        self.assertEqual(parse_room_title({"code": 0, "data": {"title": 123}}), "")
+        with self.assertRaises(ValueError):
+            parse_room_title({"code": -1})
+
     def test_fetch_live_task_groups_follows_redirect_and_sets_headers(self) -> None:
         requests: list[httpx.Request] = []
         state = {

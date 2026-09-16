@@ -69,6 +69,13 @@ def parse_live_room_info(payload: dict[str, Any], room_id: int) -> LiveRoomInfo:
     )
 
 
+def parse_room_title(payload: dict[str, Any]) -> str:
+    if payload.get("code") != 0:
+        raise ValueError("获取直播间名称失败")
+    title = (payload.get("data") or {}).get("title")
+    return title.strip() if isinstance(title, str) else ""
+
+
 def parse_room_owner_uid(payload: dict[str, Any], room_id: int) -> int:
     if payload.get("code") != 0:
         raise ValueError(
