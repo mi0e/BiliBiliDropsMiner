@@ -25,7 +25,7 @@ class SessionPlan:
 class BilibiliWatchTimeMiner:
     def __init__(self, config: MinerConfig) -> None:
         self.config = config
-        self.on_task_progress: Callable[[list[TaskProgress]], None] | None = None
+        self.on_task_progress: Callable[[list[TaskProgress], list[str]], None] | None = None
         self._stop_event = threading.Event()
         self._threads: list[threading.Thread] = []
         self._uid: int | None = None

@@ -72,7 +72,8 @@ class X25KnWorkerTest(unittest.TestCase):
 
         async def exercise():
             stop = asyncio.Event()
-            def report(items):
+            def report(items, task_ids):
+                self.assertEqual(task_ids, ["done"])
                 results.extend(items)
                 stop.set()
             worker = X25KnWorker(client, _BlockingNotifier(),

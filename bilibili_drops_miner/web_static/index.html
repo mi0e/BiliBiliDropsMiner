@@ -83,7 +83,6 @@
           </form>
           <div id="groups" class="empty">暂无任务分组</div>
           <div id="tasks" aria-live="polite"></div>
-          <div id="claim-results" aria-live="polite"></div>
         </div>
         <div class="task-toolbar">
           <div class="actions"><button id="progress" class="secondary">刷新进度</button><button id="claim" class="soft-button">领取可领的奖励 <span aria-hidden="true">→</span></button></div>
@@ -95,6 +94,12 @@
   </main>
   <button id="logs-toggle" class="logs-toggle" aria-haspopup="dialog" aria-controls="activity-section" aria-expanded="false"><span aria-hidden="true">›_</span> 运行日志</button>
 
+  <button id="claim-toggle" class="secondary claim-toggle" aria-controls="claim-bubble" aria-expanded="false" hidden>领取结果 <span id="claim-count">0</span></button>
+  <section id="claim-bubble" class="claim-bubble" aria-labelledby="claim-title" hidden>
+    <div class="claim-heading"><h2 id="claim-title">领取结果</h2><button id="claim-close" class="text-button" aria-label="收起领取结果">收起 ×</button></div>
+    <p id="claim-summary" role="status"></p>
+    <div id="claim-results" tabindex="0" aria-label="奖励领取详情"></div>
+  </section>
   <dialog class="activity-card logs-dialog" id="activity-section" aria-labelledby="activity-title">
     <div class="activity-heading">
       <div class="heading-label"><span class="terminal-icon" aria-hidden="true">›_</span><h2 id="activity-title">运行日志</h2></div>
