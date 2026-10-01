@@ -316,6 +316,54 @@ class WebTests(unittest.TestCase):
         self.app.state.web.groups = [{"task_ids": ["task-a"]}]
         self.app.state.web.selected = [0]
 
+    def test_background_progress_reaches_state_and_survives_stop(self):
+        from bilibili_drops_miner.client_parts.models import TaskCheckpointProgress
+        self.prepare_tasks()
+        self.post("settings", {"room_ids": [123]})
+        self.post("task-ids", {"task_ids": "task-a"})
+        reported = threading.Event()
+        progress = TaskProgress("task-a", "观看", 1, 2, 5,
+                                [TaskCheckpointProgress("one", "时长", 1, 2, 5)])
+
+        class ReportingMiner(FakeMiner):
+            def run(inner):
+                inner.on_task_progress([progress])
+                reported.set()
+                super().run()
+
+        with patch("bilibili_drops_miner.web.BilibiliWatchTimeMiner", ReportingMiner):
+            self.assertEqual(self.post("start").status_code, 200)
+            self.assertTrue(reported.wait(1))
+            with patch("bilibili_drops_miner.web.BilibiliClient") as factory:
+                for _ in range(2):
+                    data = self.client.get("/api/state").json()
+                    self.assertEqual(data["task_progress"][0]["check_points"][0]["cur_value"], 2)
+                    self.assertIsNotNone(data["progress_version"])
+                factory.assert_not_called()
+            self.post("stop")
+            self.app.state.web.thread.join(1)
+            self.assertFalse(self.app.state.web.thread.is_alive())
+            self.assertEqual(self.client.get("/api/state").json()["task_progress"], data["task_progress"])
+
+    def test_progress_discards_old_account_or_selection_and_redacts(self):
+        self.prepare_tasks()
+        state = self.app.state.web
+        context = state.task_context()
+        state.publish_progress([{"task_id": "task-a", "task_name": COOKIE}], context)
+        response = self.client.get("/api/state")
+        self.assertNotIn("test-secret", response.text)
+        self.assertTrue(response.json()["task_progress"])
+        self.post("task-ids", {"task_ids": "new-task"})
+        self.assertEqual(self.client.get("/api/state").json()["task_progress"], [])
+        state.publish_progress([{"task_id": "task-a"}], context)
+        self.assertEqual(state.snapshot()["task_progress"], [])
+        context = state.task_context()
+        state.publish_progress([], context)
+        self.assertIsNotNone(state.snapshot()["progress_version"])
+        self.post("logout")
+        state.publish_progress([{"task_id": "task-a"}], context)
+        self.assertIsNone(state.snapshot()["progress_version"])
+
     def test_task_progress_uses_selected_ids_and_closes_client(self):
         self.prepare_tasks()
         with patch("bilibili_drops_miner.web.BilibiliClient") as factory:
@@ -325,6 +373,7 @@ class WebTests(unittest.TestCase):
             response = self.post("tasks/progress")
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["items"][0]["cur_value"], 2)
+            self.assertEqual(self.client.get("/api/state").json()["task_progress"][0]["cur_value"], 2)
             client.get_task_progress.assert_awaited_once_with(["task-a"])
             client.close.assert_awaited_once()
         self.assertFalse(self.app.state.web.task_busy)
@@ -363,6 +412,38 @@ class WebTests(unittest.TestCase):
         with patch("bilibili_drops_miner.web.BilibiliClient", side_effect=RuntimeError(COOKIE)):
             self.assertEqual(self.post("tasks/progress").status_code, 502)
         self.assertFalse(self.app.state.web.task_busy)
+
+    def test_short_cookie_values_do_not_corrupt_room_or_connection_numbers(self):
+        from bilibili_drops_miner.web import redact
+        cookie = COOKIE + "; live_status=1; preference=5"
+        for number in (71, 72, 73, 74, 75, 76):
+            line = f"直播间 229158869 连接 #{number} 已启动"
+            self.assertEqual(redact(line, cookie), line)
+        self.assertNotIn("test-secret", redact(COOKIE, cookie))
+
+    def test_account_validation_distinguishes_invalid_and_network_error(self):
+        self.assertEqual(self.client.get("/api/account").json()["status"], "empty")
+        for outcome, expected in [((123, "测试账号"), "valid"), ((None, ""), "invalid"), (TimeoutError(), "error")]:
+            with self.subTest(expected=expected):
+                self.app.state.web.cookie = COOKIE + "; variant=" + expected
+                with patch("bilibili_drops_miner.web.BilibiliClient") as factory:
+                    client = factory.return_value
+                    client.get_self_info = AsyncMock()
+                    if isinstance(outcome, Exception):
+                        client.get_self_info.side_effect = outcome
+                    else:
+                        client.get_self_info.return_value = outcome
+                    client.close = AsyncMock()
+                    for _ in range(2):
+                        response = self.client.get("/api/account")
+                        self.assertEqual(response.json()["status"], expected)
+                        self.assertNotIn("test-secret", response.text)
+                    if expected == "valid":
+                        self.assertEqual(response.json()["name"], "测试账号")
+                    client.get_self_info.assert_awaited_once()
+                    client.close.assert_awaited_once()
+        self.post("logout")
+        self.assertEqual(self.client.get("/api/account").json()["status"], "empty")
 
     def test_logs_redact_credentials_and_request_urls(self):
         self.login()

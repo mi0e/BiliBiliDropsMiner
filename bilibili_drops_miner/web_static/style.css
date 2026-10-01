@@ -235,3 +235,114 @@ pre { margin: 0; min-height: 118px; max-height: 300px; padding: 24px 28px; overf
   html { scroll-behavior: auto; }
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
+
+/* Give task results the main workspace and keep configuration compact. */
+.overview-panel { grid-template-columns: auto minmax(0, 1fr) auto; gap: 28px; }
+.overview-panel-top { justify-content: flex-start; gap: 16px; }
+.metrics { grid-template-columns: minmax(0, 1fr) 130px; align-items: start; gap: 24px; }
+.metrics dt { font-size: 12px; line-height: 20px; }
+.metrics dd, .metrics .room-summary { font-size: 20px; line-height: 30px; margin-top: 4px; letter-spacing: 0; }
+.account-status { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.account-card .card-heading { flex-wrap: wrap; }
+.task-id-editor { grid-template-columns: minmax(0, 1fr); }
+.task-toolbar { justify-content: flex-end; }
+@media (min-width: 1024px) {
+  main { max-width: 1600px; }
+  .workspace-grid { grid-template-columns: minmax(300px, 1fr) minmax(0, 2.5fr); grid-template-rows: auto auto auto; align-items: start; }
+  .account-card { grid-column: 1; grid-row: 1; }
+  .configuration-card { grid-column: 1; grid-row: 2; }
+  .tasks-card { grid-column: 2; grid-row: 1 / 3; height: auto; min-height: 100%; }
+  .task-content { flex: initial; overflow: visible; }
+  .task-toolbar { margin-top: auto; }
+  .activity-card { grid-column: 1 / -1; grid-row: 3; height: 240px; }
+  .fields { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .fields > label:last-child { grid-column: 1 / -1; }
+  .form-footer { margin-top: 12px; padding-top: 12px; }
+}
+@media (max-width: 1100px) {
+  .overview-panel { grid-template-columns: minmax(0, 1fr) auto; }
+  .overview-panel-top { grid-column: 1 / -1; justify-content: space-between; }
+}
+@media (max-width: 767px) {
+  .overview-panel { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .metrics { grid-template-columns: minmax(0, 1fr) 100px; gap: 12px; }
+  .metrics dd, .metrics .room-summary { font-size: 18px; }
+}
+
+/* Logs live in the browser top layer, outside the workspace layout. */
+.logs-toggle { position: fixed; right: 24px; bottom: 16px; z-index: 10; min-height: 38px; padding: 6px 14px; gap: 8px; border: 1px solid #39473f; border-radius: 8px; background: #19211d; color: #b5d4be; box-shadow: 0 3px 12px rgb(15 23 18 / 14%); font-size: 12px; font-weight: 500; }
+.logs-toggle > span { color: #84b995; font-family: "Cascadia Code", Consolas, monospace; font-size: 18px; }
+.logs-toggle:hover:not(:disabled) { transform: none; background: #243129; border-color: #648470; color: #d5ebdc; box-shadow: 0 4px 14px rgb(15 23 18 / 18%); }
+.logs-toggle:hover:not(:disabled) > span { transform: none; }
+.logs-dialog { position: fixed; inset: auto 24px 24px auto; margin: 0; padding: 0; width: min(880px, calc(100vw - 48px)); max-width: none; height: min(520px, calc(100dvh - 48px)); max-height: none; color: #c4c5df; box-shadow: 0 24px 80px rgb(15 23 42 / 35%); }
+.logs-dialog:not([open]) { display: none; }
+.logs-dialog[open] { display: flex; flex-direction: column; }
+.logs-dialog::backdrop { background: rgb(15 23 42 / 28%); }
+.logs-dialog .activity-heading { padding: 12px 20px; flex-shrink: 0; }
+.logs-dialog .actions { align-items: center; }
+.logs-dialog #logs-close { color: #e0e7ff; min-height: 36px; }
+.logs-dialog pre { flex: 1; min-height: 0; max-height: none; padding: 16px 20px; }
+main { padding-bottom: 72px; }
+@media (min-width: 1024px) and (min-height: 700px) {
+  main { height: 100dvh; display: flex; flex-direction: column; padding-bottom: 16px; }
+  .overview { padding: 16px 0; flex-shrink: 0; }
+  #message { flex-shrink: 0; }
+  .workspace-grid { flex: 1; min-height: 0; grid-template-rows: auto minmax(0, 1fr); gap: 16px; align-items: stretch; }
+  .account-card, .configuration-card { padding: 16px 20px; min-height: 0; overflow: auto; }
+  .account-modes { margin-top: 10px; }
+  #cookie-form { margin-top: 10px; gap: 4px; }
+  .account-actions { margin-top: 4px; justify-content: flex-end; }
+  .account-actions button { min-height: 32px; padding: 4px 8px; }
+  #settings { margin-top: 10px; }
+  #rooms { height: 48px; min-height: 48px; }
+  .fields { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .fields > label:last-child { grid-column: auto; }
+  .fields > label { font-size: 11px; }
+  .fields input { min-height: 38px; padding: 6px 10px; }
+  .form-footer { margin-top: 8px; padding-top: 8px; }
+  .tasks-card { height: 100%; min-height: 0; }
+  .task-content { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+  #qr-image { width: 140px; height: 140px; }
+}
+@media (max-width: 767px) {
+  .logs-toggle { right: 16px; bottom: 12px; }
+  .logs-dialog { inset: auto 12px 12px; width: calc(100vw - 24px); height: min(520px, calc(100dvh - 24px)); }
+  .logs-dialog .activity-heading { padding: 12px; gap: 8px; }
+  .logs-dialog .activity-tag { display: none; }
+}
+
+/* Account identity and validation belong beside the room overview. */
+.metrics { grid-template-columns: minmax(0, 1fr) minmax(210px, .65fr) 110px; }
+.metrics .account-summary dd { display: flex; align-items: center; min-height: 30px; }
+.metrics .account-status { font-size: 12px; line-height: 20px; padding: 3px 10px; letter-spacing: 0; }
+.metrics .account-summary { padding-left: 20px; }
+@media (min-width: 1101px) and (max-width: 1400px) {
+  .overview-panel { gap: 18px; }
+  .metrics { gap: 14px; grid-template-columns: minmax(0, 1fr) 210px 90px; }
+  .metrics > div + div { padding-left: 14px; }
+}
+@media (max-width: 767px) {
+  .metrics { grid-template-columns: minmax(0, 1fr) 100px; }
+  .metrics .account-summary { grid-column: 1 / -1; grid-row: 2; padding-left: 0; border-left: 0; }
+}
+
+@media (min-width: 1024px) and (min-height: 700px) {
+  .account-card { position: relative; padding-bottom: 12px; }
+  .account-card .card-heading { padding-right: 80px; }
+  .account-actions { position: absolute; top: 12px; right: 16px; margin: 0; }
+}
+
+@media (min-width: 1024px) and (max-width: 1100px) {
+  .overview-panel { padding: 14px 20px; gap: 10px 20px; }
+}
+
+.logs-dialog { background: #182131; border-color: #354156; }
+.logs-dialog .activity-heading { background: #202c3e; border-bottom-color: #354156; }
+.logs-dialog .terminal-icon { color: #b9c9df; background: #2a384e; border-color: #40506a; }
+.logs-dialog .activity-tag { color: #b9c9df; border-color: #4a5971; }
+.logs-dialog pre { color: #cbd5e1; }
+
+/* The floating log entry no longer reserves a row below the workspace. */
+@media (min-width: 1024px) and (max-width: 1840px) and (min-height: 700px) {
+  .task-toolbar { padding-right: 112px; }
+}

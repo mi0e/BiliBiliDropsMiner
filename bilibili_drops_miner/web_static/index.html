@@ -21,6 +21,7 @@
         </div>
         <dl class="metrics">
           <div><dt>配置房间</dt><dd id="room-count" class="room-summary">未配置</dd></div>
+          <div class="account-summary"><dt>当前账号</dt><dd><span id="account" class="account-status" role="status">正在校验账号</span></dd></div>
           <div><dt>多开线程数</dt><dd id="session-count" title="已启动 / 已配置">0/0</dd></div>
         </dl>
         <div class="run-actions">
@@ -35,7 +36,6 @@
       <section class="card account-card" aria-labelledby="account-title">
         <div class="card-heading">
           <h2 id="account-title">账号</h2>
-          <span id="account" class="account-status">未登录</span>
         </div>
         <div class="account-modes">
           <button id="manual-mode" class="secondary" aria-pressed="true">手动填写</button>
@@ -44,8 +44,7 @@
         <form id="cookie-form">
           <label for="cookie">Cookie</label>
           <input id="cookie" type="password" autocomplete="off" spellcheck="false" maxlength="16384" placeholder="SESSDATA=…; bili_jct=…; DedeUserID=…" required>
-          <button id="save-cookie" class="secondary" type="submit">保存 Cookie</button>
-        </form>
+        <p class="hint">输入后自动校验账号</p></form>
         <div id="qr-panel" hidden>
           <div class="qr-frame"><img id="qr-image" alt="哔哩哔哩登录二维码"></div>
           <p id="qr-status" role="status">等待扫码</p>
@@ -66,7 +65,7 @@
             <label for="reconnect">重连间隔 <span class="unit">秒</span><input id="reconnect" type="number" min="1" max="300" value="8" required></label>
             <label for="interval">任务查询间隔 <span class="unit">秒</span><input id="interval" type="number" min="10" max="3600" value="30" required></label>
           </div>
-          <div class="form-footer"><span class="hint">运行中请先停止，再修改配置。</span><button class="secondary" type="submit">保存配置 <span aria-hidden="true">↗</span></button></div>
+          <div class="form-footer"><span class="hint">输入后自动同步；运行中请先停止再修改。</span></div>
         </form>
       </section>
 
@@ -80,26 +79,28 @@
             <label for="task-ids">手动任务 ID <span class="hint">与所选分组合并</span></label>
             <div class="task-id-editor">
               <textarea id="task-ids" rows="2" maxlength="16384" placeholder="多个 ID 用逗号或换行分隔"></textarea>
-              <button id="save-task-ids" class="secondary" type="submit">保存 ID</button>
             </div>
           </form>
           <div id="groups" class="empty">暂无任务分组</div>
           <div id="tasks" aria-live="polite"></div>
+          <div id="claim-results" aria-live="polite"></div>
         </div>
         <div class="task-toolbar">
-          <button id="select" class="secondary">保存分组选择</button>
           <div class="actions"><button id="progress" class="secondary">刷新进度</button><button id="claim" class="soft-button">领取可领的奖励 <span aria-hidden="true">→</span></button></div>
         </div>
       </section>
 
-      <section class="activity-card wide" id="activity-section" aria-labelledby="activity-title">
-        <div class="activity-heading">
-          <div class="heading-label"><span class="terminal-icon" aria-hidden="true">›_</span><h2 id="activity-title">运行记录</h2></div>
-          <span class="activity-tag">自动刷新</span>
-        </div>
-        <pre id="logs" tabindex="0" aria-label="运行日志">暂无记录</pre>
-      </section>
     </div>
+
   </main>
+  <button id="logs-toggle" class="logs-toggle" aria-haspopup="dialog" aria-controls="activity-section" aria-expanded="false"><span aria-hidden="true">›_</span> 运行日志</button>
+
+  <dialog class="activity-card logs-dialog" id="activity-section" aria-labelledby="activity-title">
+    <div class="activity-heading">
+      <div class="heading-label"><span class="terminal-icon" aria-hidden="true">›_</span><h2 id="activity-title">运行日志</h2></div>
+      <div class="actions"><span class="activity-tag">自动刷新</span><button id="logs-close" class="text-button" aria-label="收起运行日志" autofocus>收起 <span aria-hidden="true">×</span></button></div>
+    </div>
+    <pre id="logs" tabindex="0" aria-label="运行日志">暂无记录</pre>
+  </dialog>
 </body>
 </html>

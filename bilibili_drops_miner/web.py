@@ -35,7 +35,7 @@ from bilibili_drops_miner.utils import parse_cookie, parse_task_ids
 def redact(text: str, cookie: str) -> str:
     for part in cookie.split(";"):
         name, separator, value = part.strip().partition("=")
-        if separator and value and name != "DedeUserID":
+        if separator and value and (name.lower() in {"sessdata", "bili_jct", "csrf", "token", "sendkey"} or len(value) >= 16):
             text = text.replace(value, "[已隐藏]")
     text = re.sub(r"https?://\S+", "[请求地址已隐藏]", text)
     return re.sub(r"(?i)(SESSDATA|bili_jct|csrf|token|sendkey)\s*[=:]\s*[^\s;,]+",
@@ -97,6 +97,9 @@ class WebState:
         self.groups: list[dict] = []
         self.selected: list[int] = []
         self.manual_task_ids: list[str] = []
+        self.progress_context = None
+        self.progress_items: list[dict] = []
+        self.progress_version: str | None = None
         self.room_cache: tuple[int, str, float] | None = None
         self.generation = secrets.token_hex(16)
         self.thread: threading.Thread | None = None
@@ -166,11 +169,26 @@ class WebState:
             json.dump(payload, stream, ensure_ascii=False)
         temporary.replace(path)
 
+    def task_context(self) -> tuple:
+        # Called under self.lock; results belong to this account and task selection.
+        return (self.cookie, tuple(self.task_ids()), tuple(self.settings.room_ids), self.generation)
+
+    def publish_progress(self, items: list[dict], context: tuple) -> None:
+        with self.lock:
+            if self.closing or context != self.task_context():
+                return
+            self.progress_items = redact_payload(items, self.cookie)
+            self.progress_context = context
+            self.progress_version = secrets.token_hex(16)
+
     def snapshot(self) -> dict:
         with self.lock, self.event_lock:
+            progress_current = self.progress_context == self.task_context()
             return dict(settings=self.settings.model_dump(), logged_in=bool(self.cookie),
                         phase=self.phase, groups=self.groups, selected=self.selected,
                         manual_task_ids=self.manual_task_ids,
+                        task_progress=self.progress_items if progress_current else [],
+                        progress_version=self.progress_version if progress_current else None,
                         active_sessions=self.miner.active_session_count if self.miner else 0,
                         planned_sessions=len(self.settings.room_ids) * self.settings.thread_count,
                         generation=self.generation, logs=list(self.events))
@@ -192,6 +210,10 @@ class WebState:
             except ValueError:
                 raise HTTPException(400, "请先扫码或填写 Cookie，并填写房间号") from None
             self.miner = BilibiliWatchTimeMiner(config)
+            context = self.task_context()
+            self.miner.on_task_progress = lambda items: self.publish_progress(
+                [asdict(item) for item in items], context
+            )
             self.stop_requested.clear()
             self.phase = "starting"
             self.thread = threading.Thread(target=self._run, daemon=True, name="web-miner")
@@ -252,6 +274,8 @@ def create_app(*, data_dir: Path | None = None, password: str | None = None) -> 
     password = password if password is not None else os.getenv("WEB_PASSWORD", "")
     state = WebState(data_dir or Path(os.getenv("WEB_DATA_DIR", "web-data")))
     room_lookup_lock = asyncio.Lock()
+    account_lookup_lock = asyncio.Lock()
+    account_cache = None
 
     def authorize(request: Request):
         if password:
@@ -336,11 +360,41 @@ def create_app(*, data_dir: Path | None = None, password: str | None = None) -> 
     def get_state():
         return state.snapshot()
 
+    @app.get("/api/account", dependencies=[Depends(authorize)])
+    async def account_status():
+        nonlocal account_cache
+        async with account_lookup_lock:
+            with state.lock:
+                cookie = state.cookie
+            if not cookie:
+                account_cache = None
+                return {"status": "empty", "name": ""}
+            if account_cache and account_cache[0] == cookie and account_cache[2] > time.monotonic():
+                return account_cache[1]
+            client = None
+            try:
+                client = BilibiliClient(cookie)
+                uid, name = await asyncio.wait_for(client.get_self_info(), timeout=12)
+                result = {"status": "valid" if uid else "invalid", "name": name if uid else ""}
+            except Exception:
+                result = {"status": "error", "name": ""}
+            finally:
+                if client is not None:
+                    try:
+                        await client.close()
+                    except Exception:
+                        pass
+            with state.lock:
+                if state.cookie != cookie:
+                    return {"status": "checking", "name": ""}
+            account_cache = (cookie, result, time.monotonic() + (30 if result["status"] == "error" else 60))
+            return result
+
     @app.get("/api/room/{room_id}", dependencies=[Depends(authorize)])
     async def room_title(room_id: int):
         with state.lock:
             if room_id not in state.settings.room_ids:
-                raise HTTPException(404, "请先保存房间号")
+                raise HTTPException(404, "请先填写房间号")
         async with room_lookup_lock:
             with state.lock:
                 cached = state.room_cache
@@ -467,7 +521,7 @@ def create_app(*, data_dir: Path | None = None, password: str | None = None) -> 
             state.require_idle()
             rooms = list(state.settings.room_ids)
             if not rooms:
-                raise HTTPException(400, "请先保存房间号")
+                raise HTTPException(400, "请先填写房间号")
             state.discovering = True
         try:
             groups = []
@@ -520,6 +574,7 @@ def create_app(*, data_dir: Path | None = None, password: str | None = None) -> 
             if not state.cookie:
                 raise HTTPException(400, "请先扫码或填写 Cookie")
             cookie, ids = state.cookie, state.task_ids()
+            context = state.task_context()
             if not ids:
                 raise HTTPException(400, "请先手动填写任务 ID，或解析并选择任务分组")
             state.task_busy = True
@@ -530,6 +585,8 @@ def create_app(*, data_dir: Path | None = None, password: str | None = None) -> 
                          else client.receive_all_mission_rewards(ids))
             result = await asyncio.wait_for(operation, timeout=120)
             items = [asdict(item) for item in result]
+            if action == "progress":
+                state.publish_progress(items, context)
             for item in items:
                 if action == "claim" and item["status"] == -1:
                     item["message"] = "领取请求失败，请稍后刷新确认结果"

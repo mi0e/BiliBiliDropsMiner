@@ -5,8 +5,9 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
+from typing import Callable
 
-from bilibili_drops_miner.client import BilibiliClient
+from bilibili_drops_miner.client import BilibiliClient, TaskProgress
 from bilibili_drops_miner.config import MinerConfig
 from bilibili_drops_miner.notifier import MultiPlatformNotifier
 from bilibili_drops_miner.x25kn_worker import X25KnWorker
@@ -24,6 +25,7 @@ class SessionPlan:
 class BilibiliWatchTimeMiner:
     def __init__(self, config: MinerConfig) -> None:
         self.config = config
+        self.on_task_progress: Callable[[list[TaskProgress]], None] | None = None
         self._stop_event = threading.Event()
         self._threads: list[threading.Thread] = []
         self._uid: int | None = None
@@ -96,6 +98,7 @@ class BilibiliWatchTimeMiner:
                 room_id=plan.room_id,
                 session_id=f"s{plan.session_no}",
                 primary_session=plan.session_no == 1,
+                on_task_progress=self.on_task_progress,
             )
             task = asyncio.create_task(
                 worker.run_forever(),

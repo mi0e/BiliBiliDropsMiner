@@ -64,6 +64,27 @@ class _BlockingNotifier:
 
 
 class X25KnWorkerTest(unittest.TestCase):
+    def test_monitor_publishes_existing_query_and_stops_cleanly(self) -> None:
+        from unittest.mock import AsyncMock
+        client = _TaskClient()
+        client.get_task_progress = AsyncMock(wraps=client.get_task_progress)
+        results = []
+
+        async def exercise():
+            stop = asyncio.Event()
+            def report(items):
+                results.extend(items)
+                stop.set()
+            worker = X25KnWorker(client, _BlockingNotifier(),
+                                 MinerConfig(cookie="cookie", room_ids=[1], task_ids=["done"],
+                                             notify_on_task_complete=False),
+                                 uid=42, room_id=1, stop_event=stop, on_task_progress=report)
+            await asyncio.wait_for(worker._task_monitor_loop(), timeout=1)
+        asyncio.run(exercise())
+        client.get_task_progress.assert_awaited_once_with(["done"])
+        self.assertEqual(results[0].task_id, "done")
+        self.assertEqual(results[0].cur_value, 1)
+
     def test_trace_heartbeat_always_starts(self) -> None:
         client = _HeartbeatClient()
         worker = X25KnWorker(
