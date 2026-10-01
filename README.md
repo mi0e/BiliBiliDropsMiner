@@ -1,7 +1,7 @@
 # Bilibili 直播掉宝助手
 
 轻量、直接的 B 站直播掉宝/观看时长任务挂机工具。  
-支持 GUI 与 CLI 双模式，支持多房间、多会话并行与任务进度追踪。
+支持 GUI、CLI 与 Docker WebUI，支持多房间、多会话并行与任务进度追踪。
 
 - [Release 下载](https://github.com/mi0e/BiliBiliDropsMiner/releases/latest)
 - [国内下载（密码 1234）](https://wwaqd.lanzoum.com/b019vsjd5i)
@@ -150,54 +150,28 @@ Selenium Manager 会自动下载缺失的浏览器驱动。
 
 macOS 上的 GUI 与 Windows 共用同一套界面和功能，支持纯 HTTP 静态解析任务 ID（模式 1），以及通过 Chrome / Edge 自动获取 Cookie、房间号和任务 ID（模式 2）。
 
-### macOS 双击应用
-
-在 Apple Silicon 或 Intel Mac 上用对应架构的 Python 执行：
+### Docker
 
 ```bash
-python build.py --target gui --clean --dmg
+docker compose up -d --build
 ```
 
-生成的产物：
+访问 `http://127.0.0.1:23333`，默认无密码。
 
-- `dist/Bilibili Drops Miner.app`：可直接双击运行
-- `dist/Bilibili Drops Miner-macOS.dmg`：可分发的磁盘镜像
-
-本地构建会由 PyInstaller 进行 ad-hoc 签名。如果要向其他用户公开发布，还应使用 Apple Developer ID 签名并完成 notarization。
+| 参数 | 默认值 / 说明 |
+|------|--------------|
+| `ports` | `127.0.0.1:23333:23333`，仅本机访问 |
+| `WEB_PASSWORD` | 可选，在 `.env` 中设置；非空时启用认证，用户名 `admin` |
 
 ### CLI
 
-GUI 和 CLI 可以并存。服务器或纯命令行环境可使用：
+服务器或纯命令行环境可使用：
 
 ```bash
 python bilibili.py --cookie "SESSDATA=xxx; bili_jct=xxx" --rooms "23612045"
 ```
 
-## 📜 使用文档
-
-### GUI（推荐）
-
-```bash
-python bilibili_gui.py
-```
-
-填入 Cookie、房间号、任务 ID 后点击“启动”。
-
-你也可以在 GUI 中直接使用：
-
-- Cookie 扫码登录（手机确认后自动回填）
-- Cookie 自动获取（浏览器登录后自动回填）
-- 任务 ID 自动获取模式 1（填写房间号后纯 HTTP 静态解析，无需浏览器）
-- 任务 ID 自动获取模式 2（Chrome / Edge 页面解析与任务接口嗅探）
-- 房间号自动获取
-- 启动 / 停止掉宝、任务进度刷新与奖励领取
-- 自动领取开关（检测到任务达到 100% 后领取并标记已领取）
-- Gotify / Server 酱通知与详细日志
-- 配置文件保存/加载（JSON）
-
-### CLI
-
-- 获取命令帮助：`python bilibili.py --help`
+获取命令帮助：`python bilibili.py --help`
 
 ```shell
 Bilibili Drops Miner

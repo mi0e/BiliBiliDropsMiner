@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from typing import Any
+from typing import Any, Callable
 
 from bilibili_drops_miner.client import (
     BilibiliClient,
@@ -27,6 +27,7 @@ class X25KnWorker:
         session_id: str = "",
         primary_session: bool = True,
         stop_event: asyncio.Event | None = None,
+        on_task_progress: Callable[[list[TaskProgress]], None] | None = None,
     ) -> None:
         self.client = client
         self.notifier = notifier
@@ -35,6 +36,7 @@ class X25KnWorker:
         self.room_id = room_id
         self.session_id = session_id
         self.primary_session = primary_session
+        self.on_task_progress = on_task_progress
         self._stop_event = stop_event or asyncio.Event()
 
     @property
@@ -171,6 +173,11 @@ class X25KnWorker:
                     continue
             try:
                 progresses = await self.client.get_task_progress(task_ids)
+                if self.on_task_progress is not None:
+                    try:
+                        self.on_task_progress(progresses)
+                    except Exception:
+                        LOGGER.debug("任务进度展示更新失败")
                 if not progresses:
                     LOGGER.warning("未获取到任务进度，请检查任务 ID 是否正确")
                 else:

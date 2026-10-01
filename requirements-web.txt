@@ -1,0 +1,6 @@
+httpx
+qrcode>=7.4,<9
+apprise
+fastapi>=0.115,<1
+pydantic>=2,<3
+uvicorn>=0.30,<1

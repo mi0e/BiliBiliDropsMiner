@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#4f46e5">
+  <title>Bilibili 直播掉宝助手</title>
+  <link rel="stylesheet" href="/assets/style.css">
+  <script defer src="/assets/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#workspace">跳转到控制台</a>
+  <div class="ambient ambient-indigo" aria-hidden="true"></div>
+  <div class="ambient ambient-violet" aria-hidden="true"></div>
+  <main>
+    <section class="overview" aria-labelledby="page-title">
+      <div class="overview-panel">
+        <div class="overview-panel-top">
+          <h1 id="page-title">挂机概览</h1>
+          <span id="phase" class="badge" role="status">正在连接</span>
+        </div>
+        <dl class="metrics">
+          <div><dt>配置房间</dt><dd id="room-count" class="room-summary">未配置</dd></div>
+          <div class="account-summary"><dt>当前账号</dt><dd><span id="account" class="account-status" role="status">正在校验账号</span></dd></div>
+          <div><dt>多开线程数</dt><dd id="session-count" title="已启动 / 已配置">0/0</dd></div>
+        </dl>
+        <div class="run-actions">
+          <button id="start" disabled><span aria-hidden="true">▶</span> 启动挂机</button>
+          <button id="stop" class="secondary" disabled><span aria-hidden="true">■</span> 停止</button>
+        </div>
+      </div>
+    </section>
+
+    <p id="message" role="status" aria-live="polite"></p>
+    <div class="workspace-grid" id="workspace">
+      <section class="card account-card" aria-labelledby="account-title">
+        <div class="card-heading">
+          <h2 id="account-title">账号</h2>
+        </div>
+        <div class="account-modes">
+          <button id="manual-mode" class="secondary" aria-pressed="true">手动填写</button>
+          <button id="qr-button" class="secondary" aria-pressed="false">扫码登录</button>
+        </div>
+        <form id="cookie-form">
+          <label for="cookie">Cookie</label>
+          <input id="cookie" type="password" autocomplete="off" spellcheck="false" maxlength="16384" placeholder="SESSDATA=…; bili_jct=…; DedeUserID=…" required>
+        <p class="hint">输入后自动校验账号</p></form>
+        <div id="qr-panel" hidden>
+          <div class="qr-frame"><img id="qr-image" alt="哔哩哔哩登录二维码"></div>
+          <p id="qr-status" role="status">等待扫码</p>
+        </div>
+        <div class="account-actions">
+          <button id="logout" class="text-button">退出账号</button>
+        </div>
+      </section>
+
+      <section class="card configuration-card" aria-labelledby="settings-title">
+        <div class="card-heading"><h2 id="settings-title">直播间</h2></div>
+        <form id="settings">
+          <label for="rooms">直播间号 <span class="required-label">必填</span></label>
+          <textarea id="rooms" rows="2" placeholder="例如：23612045, 1017" aria-describedby="rooms-hint" required></textarea>
+          <p id="rooms-hint" class="hint">多个房间用逗号或换行分隔，最多 16 个。</p>
+          <div class="fields">
+            <label for="threads">每房间线程数<input id="threads" type="number" min="1" max="128" value="1" required></label>
+            <label for="reconnect">重连间隔 <span class="unit">秒</span><input id="reconnect" type="number" min="1" max="300" value="8" required></label>
+            <label for="interval">任务查询间隔 <span class="unit">秒</span><input id="interval" type="number" min="10" max="3600" value="30" required></label>
+          </div>
+          <div class="form-footer"><span class="hint">输入后自动同步；运行中请先停止再修改。</span></div>
+        </form>
+      </section>
+
+      <section class="card tasks-card wide" id="task-section" aria-labelledby="tasks-title">
+        <div class="card-heading">
+          <h2 id="tasks-title">掉宝任务</h2>
+          <button id="discover" class="secondary">解析任务 <span aria-hidden="true">↗</span></button>
+        </div>
+        <div class="task-content" tabindex="0" aria-label="任务分组与进度">
+          <form id="task-ids-form" class="manual-tasks">
+            <label for="task-ids">手动任务 ID <span class="hint">与所选分组合并</span></label>
+            <div class="task-id-editor">
+              <textarea id="task-ids" rows="2" maxlength="16384" placeholder="多个 ID 用逗号或换行分隔"></textarea>
+            </div>
+          </form>
+          <div id="groups" class="empty">暂无任务分组</div>
+          <div id="tasks" aria-live="polite"></div>
+          <div id="claim-results" aria-live="polite"></div>
+        </div>
+        <div class="task-toolbar">
+          <div class="actions"><button id="progress" class="secondary">刷新进度</button><button id="claim" class="soft-button">领取可领的奖励 <span aria-hidden="true">→</span></button></div>
+        </div>
+      </section>
+
+    </div>
+
+  </main>
+  <button id="logs-toggle" class="logs-toggle" aria-haspopup="dialog" aria-controls="activity-section" aria-expanded="false"><span aria-hidden="true">›_</span> 运行日志</button>
+
+  <dialog class="activity-card logs-dialog" id="activity-section" aria-labelledby="activity-title">
+    <div class="activity-heading">
+      <div class="heading-label"><span class="terminal-icon" aria-hidden="true">›_</span><h2 id="activity-title">运行日志</h2></div>
+      <div class="actions"><span class="activity-tag">自动刷新</span><button id="logs-close" class="text-button" aria-label="收起运行日志" autofocus>收起 <span aria-hidden="true">×</span></button></div>
+    </div>
+    <pre id="logs" tabindex="0" aria-label="运行日志">暂无记录</pre>
+  </dialog>
+</body>
+</html>

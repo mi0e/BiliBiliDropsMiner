@@ -33,6 +33,7 @@ from bilibili_drops_miner.client_parts.live import (
     parse_guard_active_watch_time,
     parse_live_room_info,
     parse_room_owner_uid,
+    parse_room_title,
 )
 from bilibili_drops_miner.client_parts.live_trace import (
     apply_live_trace_heartbeat_payload,
@@ -306,7 +307,15 @@ class BilibiliClient:
         )
         return parse_live_room_info(payload, room_id)
 
+    async def get_room_title(self, room_id: int) -> str:
+        payload = await self._get_room_info_payload(room_id)
+        return parse_room_title(payload)
+
     async def get_room_owner_uid(self, room_id: int) -> int:
+        payload = await self._get_room_info_payload(room_id)
+        return parse_room_owner_uid(payload, room_id)
+
+    async def _get_room_info_payload(self, room_id: int) -> dict[str, Any]:
         response = await self._request_with_transient_retry(
             lambda: self._http.get(
                 "https://api.live.bilibili.com/room/v1/Room/get_info",
@@ -317,7 +326,7 @@ class BilibiliClient:
             url="https://api.live.bilibili.com/room/v1/Room/get_info",
         )
         response.raise_for_status()
-        return parse_room_owner_uid(response.json(), room_id)
+        return response.json()
 
     async def get_live_watch_time(
         self,

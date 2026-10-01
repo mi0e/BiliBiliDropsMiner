@@ -14,6 +14,66 @@ def config() -> MinerConfig:
 
 
 class MinerLoginGuardTest(unittest.TestCase):
+    def test_active_count_excludes_staggered_threads_and_returns_to_zero(self) -> None:
+        miner = BilibiliWatchTimeMiner(config())
+        miner._uid = 42
+
+        class FakeClient:
+            def __init__(self, _cookie):
+                pass
+
+            def update_cookie(self, _cookie):
+                pass
+
+            async def close(self):
+                pass
+
+        async def scenario():
+            started = asyncio.Event()
+
+            class FakeWorker:
+                def __init__(self, **_kwargs):
+                    pass
+
+                async def run_forever(self):
+                    started.set()
+                    await asyncio.Event().wait()
+
+                async def stop(self):
+                    pass
+
+            with patch("bilibili_drops_miner.miner.BilibiliClient", FakeClient), patch(
+                "bilibili_drops_miner.miner.X25KnWorker", FakeWorker
+            ):
+                active = asyncio.create_task(miner._thread_loop(SessionPlan(1, 1), 1))
+                queued = asyncio.create_task(miner._thread_loop(SessionPlan(1, 2), 30))
+                try:
+                    await asyncio.wait_for(started.wait(), timeout=1)
+                    self.assertEqual(miner.active_session_count, 1)
+                finally:
+                    miner.stop()
+                    await asyncio.wait_for(asyncio.gather(active, queued), timeout=2)
+                self.assertEqual(miner.active_session_count, 0)
+                self.assertEqual(miner._session_tasks, set())
+
+        asyncio.run(scenario())
+
+    def test_worker_start_failure_does_not_increase_active_count(self) -> None:
+        miner = BilibiliWatchTimeMiner(config())
+        miner._uid = 42
+        client = AsyncMock()
+        with patch("bilibili_drops_miner.miner.BilibiliClient", return_value=client), patch(
+            "bilibili_drops_miner.miner.X25KnWorker", side_effect=RuntimeError("failed")
+        ):
+            # update_cookie is synchronous on the real client.
+            from unittest.mock import Mock
+            client.update_cookie = Mock()
+            with self.assertRaises(RuntimeError):
+                asyncio.run(miner._thread_loop(SessionPlan(1, 1), 1))
+        self.assertEqual(miner.active_session_count, 0)
+        self.assertEqual(miner._clients, [])
+        client.close.assert_awaited_once()
+
     def test_invalid_initial_cookie_does_not_start_sessions(self) -> None:
         miner = BilibiliWatchTimeMiner(config())
         miner._probe_login = AsyncMock(return_value=(None, ""))
