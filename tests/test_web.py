@@ -287,7 +287,7 @@ class WebTests(unittest.TestCase):
             self.assertEqual(self.post("start").status_code, 409)
             self.assertEqual(self.post("logout").status_code, 409)
             self.assertEqual(self.post("cookie", {"cookie": COOKIE}).status_code, 409)
-            self.assertEqual(self.post("task-ids", {"task_ids": "test-task"}).status_code, 409)
+            self.assertEqual(self.post("task-ids", {"task_ids": "test-task"}).status_code, 200)
             self.assertEqual(self.post("settings", {"room_ids": [456]}).status_code, 409)
             self.assertEqual(self.post("stop").status_code, 200)
             self.app.state.web.thread.join(1)
@@ -316,6 +316,63 @@ class WebTests(unittest.TestCase):
         self.app.state.web.groups = [{"task_ids": ["task-a"]}]
         self.app.state.web.selected = [0]
 
+    def test_running_discovery_and_selection_update_live_monitor_without_restart(self):
+        self.login()
+        self.post("settings", {"room_ids": [123]})
+        self.post("task-ids", {"task_ids": "manual"})
+        with patch("bilibili_drops_miner.web.BilibiliWatchTimeMiner", FakeMiner):
+            self.assertEqual(self.post("start").status_code, 200)
+            state = self.app.state.web
+            miner, thread = state.miner, state.thread
+            groups = [{"label": "new", "active": True, "task_ids": ["new-task"]}]
+            with patch("bilibili_drops_miner.web.fetch_live_task_groups", return_value=groups):
+                response = self.post("discover")
+            self.assertEqual(response.status_code, 200)
+            self.assertIs(state.miner, miner)
+            self.assertIs(state.thread, thread)
+            self.assertTrue(thread.is_alive())
+            self.assertEqual(miner.config.task_ids, ["manual", "new-task"])
+            stale = TaskProgress("manual", "old", 1, 1, 10)
+            miner.on_task_progress([stale], ["manual"])
+            self.assertEqual(state.snapshot()["task_progress"], [])
+            fresh = TaskProgress("new-task", "new", 1, 2, 10)
+            miner.on_task_progress([fresh], ["manual", "new-task"])
+            self.assertEqual(state.snapshot()["task_progress"][0]["cur_value"], 2)
+            self.assertEqual(self.post("selection", {"groups": [], "generation": state.generation}).status_code, 200)
+            self.assertEqual(miner.config.task_ids, ["manual"])
+            self.assertEqual(state.snapshot()["task_progress"], [])
+            self.assertEqual(self.post("task-ids", {"task_ids": "replacement"}).status_code, 200)
+            self.assertEqual(miner.config.task_ids, ["replacement"])
+            self.assertEqual(self.post("settings", {"room_ids": [456]}).status_code, 409)
+            state.phase = "stopping"
+            self.assertEqual(self.post("discover").status_code, 409)
+            self.post("stop")
+            thread.join(1)
+            self.assertFalse(thread.is_alive())
+
+    def test_discovery_blocks_other_task_changes_but_allows_stop(self):
+        entered, release = threading.Event(), threading.Event()
+        def fetch(_room):
+            entered.set()
+            release.wait(2)
+            return []
+        self.post("settings", {"room_ids": [123]})
+        results = []
+        with patch("bilibili_drops_miner.web.fetch_live_task_groups", side_effect=fetch):
+            thread = threading.Thread(target=lambda: results.append(self.post("discover")))
+            thread.start()
+            try:
+                self.assertTrue(entered.wait(1))
+                self.assertEqual(self.post("discover").status_code, 409)
+                self.assertEqual(self.post("task-ids", {"task_ids": "x"}).status_code, 409)
+                self.assertEqual(self.post("stop").status_code, 200)
+            finally:
+                release.set()
+                thread.join(2)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(results[0].status_code, 200)
+        self.assertFalse(self.app.state.web.discovering)
+
     def test_background_progress_reaches_state_and_survives_stop(self):
         from bilibili_drops_miner.client_parts.models import TaskCheckpointProgress
         self.prepare_tasks()
@@ -327,7 +384,7 @@ class WebTests(unittest.TestCase):
 
         class ReportingMiner(FakeMiner):
             def run(inner):
-                inner.on_task_progress([progress])
+                inner.on_task_progress([progress], ["task-a"])
                 reported.set()
                 super().run()
 

@@ -151,6 +151,21 @@ class WebState:
         if self.closing or self.busy() or self.discovering or self.task_busy:
             raise HTTPException(409, "请等待当前操作结束，或先停止挂机")
 
+    def require_task_edit(self) -> None:
+        if self.closing or self.discovering or self.task_busy or self.phase == "stopping":
+            raise HTTPException(409, "请等待当前任务操作或停止操作结束")
+
+    def sync_running_tasks(self) -> None:
+        if self.miner is not None:
+            # Replace the list; in-flight queries retain their original ID snapshot.
+            self.miner.config.task_ids = self.task_ids()
+
+    def receive_miner_progress(self, miner, items, queried_ids) -> None:
+        with self.lock:
+            if miner is not self.miner or list(queried_ids) != self.task_ids():
+                return
+            self.publish_progress([asdict(item) for item in items], self.task_context())
+
     def task_ids(self) -> list[str]:
         selected_ids = [str(task) for i in self.selected
                         for task in self.groups[i]["task_ids"]]
@@ -210,10 +225,8 @@ class WebState:
             except ValueError:
                 raise HTTPException(400, "请先扫码或填写 Cookie，并填写房间号") from None
             self.miner = BilibiliWatchTimeMiner(config)
-            context = self.task_context()
-            self.miner.on_task_progress = lambda items: self.publish_progress(
-                [asdict(item) for item in items], context
-            )
+            miner = self.miner
+            miner.on_task_progress = lambda items, ids: self.receive_miner_progress(miner, items, ids)
             self.stop_requested.clear()
             self.phase = "starting"
             self.thread = threading.Thread(target=self._run, daemon=True, name="web-miner")
@@ -438,7 +451,7 @@ def create_app(*, data_dir: Path | None = None, password: str | None = None) -> 
         if len(task_ids) > 100 or any(len(task_id) > 256 for task_id in task_ids):
             raise HTTPException(400, "最多填写 100 个任务 ID，每个不超过 256 字符")
         with state.lock:
-            state.require_idle()
+            state.require_task_edit()
             previous_ids = state.manual_task_ids
             state.manual_task_ids = task_ids
             try:
@@ -446,6 +459,7 @@ def create_app(*, data_dir: Path | None = None, password: str | None = None) -> 
             except OSError:
                 state.manual_task_ids = previous_ids
                 raise
+            state.sync_running_tasks()
         return {"ok": True, "task_ids": task_ids}
 
     @app.post("/api/settings", dependencies=[Depends(authorize)])
@@ -518,7 +532,7 @@ def create_app(*, data_dir: Path | None = None, password: str | None = None) -> 
     @app.post("/api/discover", dependencies=[Depends(authorize)])
     def discover():
         with state.lock:
-            state.require_idle()
+            state.require_task_edit()
             rooms = list(state.settings.room_ids)
             if not rooms:
                 raise HTTPException(400, "请先填写房间号")
@@ -532,10 +546,18 @@ def create_app(*, data_dir: Path | None = None, password: str | None = None) -> 
                     raise HTTPException(502, f"房间 {room} 静态页面获取失败，请稍后重试") from None
                 groups.extend(dict(group, room_id=room) for group in found)
             with state.lock:
+                if state.closing:
+                    raise HTTPException(409, "服务正在关闭")
+                previous = state.groups, state.selected, state.generation
                 state.groups = groups
                 state.selected = [i for i, group in enumerate(groups) if group.get("active")]
                 state.generation = secrets.token_hex(16)
-                state.save()
+                try:
+                    state.save()
+                except OSError:
+                    state.groups, state.selected, state.generation = previous
+                    raise
+                state.sync_running_tasks()
                 state.event(f"静态 HTML 解析完成：发现 {len(groups)} 个任务分组")
             return state.snapshot()
         finally:
@@ -545,13 +567,19 @@ def create_app(*, data_dir: Path | None = None, password: str | None = None) -> 
     @app.post("/api/selection", dependencies=[Depends(authorize)])
     def select(body: GroupSelection):
         with state.lock:
-            state.require_idle()
+            state.require_task_edit()
             if body.generation != state.generation:
                 raise HTTPException(409, "任务分组已更新，请刷新页面")
             if any(i < 0 or i >= len(state.groups) for i in body.groups):
                 raise HTTPException(400, "任务分组无效")
+            previous = state.selected
             state.selected = list(dict.fromkeys(body.groups))
-            state.save()
+            try:
+                state.save()
+            except OSError:
+                state.selected = previous
+                raise
+            state.sync_running_tasks()
         return {"ok": True}
 
     @app.post("/api/start", dependencies=[Depends(authorize)])

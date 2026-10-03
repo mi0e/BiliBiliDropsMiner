@@ -92,15 +92,17 @@ function renderGroups(data) {
 }
 function controls() {
   if (!current) return;
-  const busy = current.phase !== 'stopped' || [...pending].some(button => button.id !== 'stop');
-  for (const id of ['qr-button', 'manual-mode', 'logout', 'discover']) $(id).disabled = busy || pending.has($(id));
-  for (const input of $('settings').elements) input.disabled = busy || pending.has(input);
-  for (const form of ['cookie-form', 'task-ids-form']) {
-    for (const input of $(form).elements) input.disabled = busy || pending.has(input);
-  }
-  for (const input of $('groups').querySelectorAll('input')) input.disabled = busy;
+  const operationPending = [...pending].some(button => button.id !== 'stop');
+  const busy = current.phase !== 'stopped' || operationPending;
+  const taskBusy = current.phase === 'stopping' || operationPending;
+  for (const id of ['qr-button', 'manual-mode', 'logout']) $(id).disabled = busy || pending.has($(id));
+  for (const input of $('settings').elements) input.disabled = busy;
+  for (const input of $('cookie-form').elements) input.disabled = busy;
+  for (const input of $('task-ids-form').elements) input.disabled = taskBusy;
+  for (const input of $('groups').querySelectorAll('input')) input.disabled = taskBusy;
+  for (const id of ['discover', 'progress', 'claim']) $(id).disabled = taskBusy || pending.has($(id));
   $('start').disabled = busy || !accountValid || pending.has($('start'));
-  $('stop').disabled = !busy || pending.has($('stop'));
+  $('stop').disabled = current.phase === 'stopped' || pending.has($('stop'));
 }
 function renderRoom(rooms) {
   const target = $('room-count');
@@ -191,17 +193,47 @@ $('qr-button').onclick = () => action($('qr-button'), async () => {
   }
   qrTimer = setTimeout(poll, 2500);
 });
-$('logout').onclick = () => action($('logout'), async () => { clearTimeout(syncTimer); await syncQueue.catch(() => {}); dirty.delete('cookie'); await api('logout', {}); accountValid = false; $('cookie').value = ''; cancelQr(); message('已清除服务端登录凭据'); });
+$('logout').onclick = () => action($('logout'), async () => { clearTimeout(syncTimer); await syncQueue.catch(() => {}); dirty.delete('cookie'); await api('logout', {}); showClaimResults(false); $('claim-toggle').hidden = true; $('claim-results').replaceChildren(); accountValid = false; $('cookie').value = ''; cancelQr(); message('已清除服务端登录凭据'); });
 $('discover').onclick = () => action($('discover'), async () => { message('正在获取静态 HTML…', false, '', 0); const data = await api('discover', {}); groupVersion = null; renderGroups(data); message(data.groups.length ? '解析完成，勾选任务分组即可自动应用' : '静态 HTML 中没有可解析的任务；可稍后重试或仅运行观看挂机'); });
 for (const operation of ['start', 'stop']) $(operation).onclick = () => action($(operation), async () => { await api(operation, {}); message(operation === 'start' ? '正在使用当前配置启动挂机' : '已请求停止，正在释放连接', false, operation === 'stop' ? 'stopped' : 'running'); });
+function showClaimResults(open) {
+  $('claim-bubble').hidden = !open;
+  $('claim-toggle').setAttribute('aria-expanded', String(open));
+}
+$('claim-toggle').onclick = () => showClaimResults($('claim-bubble').hidden);
+$('claim-close').onclick = () => {
+  showClaimResults(false);
+  $('claim-toggle').focus({preventScroll: true});
+};
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !$('claim-bubble').hidden && !$('activity-section').open) {
+    showClaimResults(false);
+    $('claim-toggle').focus({preventScroll: true});
+  }
+});
 function renderTasks(items, claim) {
   const target = $(claim ? 'claim-results' : 'tasks');
   target.replaceChildren();
+  if (claim) {
+    const succeeded = items.filter(item => item.success).length;
+    const skipped = items.filter(item => !item.success && item.skipped).length;
+    $('claim-count').textContent = items.length;
+    $('claim-summary').textContent = `成功 ${succeeded} · 跳过 ${skipped} · 未领取 ${items.length - succeeded - skipped}`;
+    $('claim-toggle').hidden = false;
+    showClaimResults(true);
+    target.scrollTop = 0;
+  }
   if (!items.length) { target.textContent = claim ? '暂无领取结果' : ''; return; }
   for (const item of items) {
     const row = document.createElement('div'); row.className = 'task';
     const title = document.createElement('strong'); title.textContent = item.task_name || item.task_id; row.append(title);
-    if (claim) { const p = document.createElement('p'); p.textContent = `${item.success ? '领取成功' : item.skipped ? '已跳过' : '未领取'} · ${item.message || ''}`; row.append(p); }
+    if (claim) {
+      row.dataset.result = item.success ? 'success' : item.skipped ? 'skipped' : 'failed';
+      if (item.award_name || item.reward_name) {
+        const reward = document.createElement('small'); reward.textContent = item.award_name || item.reward_name; row.append(reward);
+      }
+      const p = document.createElement('p'); p.textContent = `${item.success ? '领取成功' : item.skipped ? '已跳过' : '未领取'} · ${item.message || ''}`; row.append(p);
+    }
     else {
       const checkpoints = item.check_points && item.check_points.length ? item.check_points : [item];
       for (const point of checkpoints) {

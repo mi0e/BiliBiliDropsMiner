@@ -27,7 +27,7 @@ class X25KnWorker:
         session_id: str = "",
         primary_session: bool = True,
         stop_event: asyncio.Event | None = None,
-        on_task_progress: Callable[[list[TaskProgress]], None] | None = None,
+        on_task_progress: Callable[[list[TaskProgress], list[str]], None] | None = None,
     ) -> None:
         self.client = client
         self.notifier = notifier
@@ -175,7 +175,7 @@ class X25KnWorker:
                 progresses = await self.client.get_task_progress(task_ids)
                 if self.on_task_progress is not None:
                     try:
-                        self.on_task_progress(progresses)
+                        self.on_task_progress(progresses, task_ids)
                     except Exception:
                         LOGGER.debug("任务进度展示更新失败")
                 if not progresses:

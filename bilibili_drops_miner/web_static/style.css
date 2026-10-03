@@ -346,3 +346,24 @@ main { padding-bottom: 72px; }
 @media (min-width: 1024px) and (max-width: 1840px) and (min-height: 700px) {
   .task-toolbar { padding-right: 112px; }
 }
+
+/* Reward details float independently of task progress. */
+.claim-toggle { position: fixed; left: 24px; bottom: 16px; z-index: 10; min-height: 38px; padding: 6px 14px; box-shadow: var(--shadow); }
+.claim-toggle > span { padding: 0 6px; border-radius: 5px; background: var(--tint); color: #526387; font-variant-numeric: tabular-nums; }
+.claim-bubble { position: fixed; left: 24px; bottom: 66px; z-index: 20; display: flex; flex-direction: column; width: min(380px, calc(100vw - 48px)); max-height: min(480px, calc(100dvh - 90px)); padding: 16px; background: #fff; border: 1px solid #dce3ed; border-radius: 14px; box-shadow: 0 12px 40px rgb(30 41 59 / 16%); }
+.claim-bubble::after { content: ''; position: absolute; left: 28px; bottom: -7px; width: 12px; height: 12px; background: white; border-right: 1px solid #dce3ed; border-bottom: 1px solid #dce3ed; transform: rotate(45deg); }
+.claim-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-shrink: 0; }
+.claim-heading h2 { font-size: 15px; }
+.claim-heading button { min-height: 30px; padding: 4px 8px; }
+#claim-summary { padding: 8px 0 12px; color: var(--muted); font-size: 12px; flex-shrink: 0; }
+#claim-results { overflow: auto; min-height: 0; overscroll-behavior: contain; scrollbar-gutter: stable; font-size: 12px; }
+.claim-bubble .task { padding: 12px 4px; margin: 0; border: 0; border-top: 1px solid #edf0f5; border-radius: 0; }
+.claim-bubble .task strong { font-size: 12px; }
+.claim-bubble .task small { display: block; margin-top: 4px; color: var(--muted); }
+.claim-bubble .task p { margin: 5px 0 0; font-size: 11px; }
+.claim-bubble .task[data-result="success"] p { color: #24734d; }
+.claim-bubble .task[data-result="failed"] p { color: #b4533c; }
+@media (max-width: 767px) {
+  .claim-toggle { left: 16px; bottom: 12px; }
+  .claim-bubble { left: 16px; bottom: 62px; width: calc(100vw - 32px); }
+}
