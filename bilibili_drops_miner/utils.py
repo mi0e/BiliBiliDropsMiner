@@ -307,6 +307,29 @@ def _extract_task_groups_from_eva_layer_tree(
     return groups
 
 
+def _extract_task_groups_from_flat_tasklists(
+    layer_tree: object,
+) -> list[dict[str, object]]:
+    """把页面里全部 EraTasklistPc 组件的任务合并成单个分组。
+
+    页面改版后不再使用 EvaTabs / EvaTabs.Panel 嵌套结构，任务列表变成一个
+    扁平的 EraTasklistPc 组件。此时按标签页归组的前提不成立，
+    _extract_task_groups_from_eva_layer_tree 会因找不到 Tabs 而返回空，
+    导致自动获取任务 ID 恒失败（实测 2026-10-03）。
+    """
+    task_ids: list[str] = []
+    seen: set[str] = set()
+    for component in _find_eva_components(
+        layer_tree, "EraTasklistPc", descend_into_matches=True
+    ):
+        props = component.get("props")
+        if isinstance(props, dict):
+            task_ids.extend(_extract_task_ids_from_task_group(props, seen))
+    if not task_ids:
+        return []
+    return [{"label": "直播间任务", "task_ids": task_ids, "active": True}]
+
+
 def _extract_task_groups_from_state(state: dict) -> list[dict[str, object]]:
 
     task_groups = state.get("EraTasklistPc") or []
@@ -317,6 +340,18 @@ def _extract_task_groups_from_state(state: dict) -> list[dict[str, object]]:
         return []
     if not isinstance(position_boxes, list):
         position_boxes = []
+
+    if not panels:
+        # 无 Tab 结构（页面改版后任务列表扁平化）：按整份 tasklist 归为一个分组，
+        # 否则这里直接返回空，自动获取任务 ID 恒失败
+        task_ids: list[str] = []
+        seen: set[str] = set()
+        for task_group in task_groups:
+            if isinstance(task_group, dict):
+                task_ids.extend(_extract_task_ids_from_task_group(task_group, seen))
+        if not task_ids:
+            return []
+        return [{"label": "直播间任务", "task_ids": task_ids, "active": True}]
 
     active_panel_id = ""
     if tabs and isinstance(tabs[0], dict):
@@ -380,6 +415,11 @@ def extract_bili_live_task_groups(page_html: str) -> list[dict[str, object]]:
         eva_state: dict[str, list] = {}
         _collect_eva_component_props(layer_tree, eva_state)
         groups = _extract_task_groups_from_state(eva_state)
+        if groups:
+            return groups
+
+        # 新增：无 Tab 结构的改版页面，任务全在一个扁平 EraTasklistPc 里
+        groups = _extract_task_groups_from_flat_tasklists(layer_tree)
         if groups:
             return groups
 
