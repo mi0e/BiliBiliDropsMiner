@@ -212,6 +212,15 @@ python build.py --target gui --dmg  # macOS 额外生成 DMG
 python build_nuitka.py --target gui  # Nuitka 打包当前平台 GUI
 ```
 
+Nuitka GUI 构建显式包含 Selenium 的 Chrome/Edge 入口，并自动跟随依赖，
+保留 BiDi 扩展安装功能；不包含未使用的版本化 DevTools 协议包。
+Windows/macOS 构建会排除其他系统的 Selenium Manager，保留当前系统的驱动管理程序。
+编译依赖报告位于 `dist-nuitka/<入口文件名>-report.xml`，可用于排查打包遗漏或体积变化。
+
+浏览器集成冒烟测试：`python tests/packaged_selenium_smoke.py chrome edge`。
+需要本机安装对应浏览器并能获取匹配驱动；测试使用临时浏览器配置、本地模拟页面与虚构 Cookie，
+验证 GUI、二维码绘制、扩展加载、网络/页面/Cookie 抓取及驱动退出，不需要登录真实账号。
+
 ## 🧩 配置文件
 
 GUI 支持保存/加载 JSON 配置文件，格式可参考 config.example.json。
