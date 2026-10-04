@@ -102,6 +102,10 @@ https://api.bilibili.com/x/task/totalv2?csrf=xxx&task_ids=taskId1,taskId2
 
 如果浏览器安装在自定义路径，可能无法被自动识别或启动。
 
+首次使用或浏览器升级后，可能需要联网补齐匹配的浏览器驱动。
+此时会显示动态进度条、当前阶段（检查版本、下载驱动、解压、启动浏览器）和已等待时间，支持取消。
+Selenium Manager 不提供下载字节数，因此不显示百分比；每次驱动准备最多等待 6 分钟，失败后可检查网络或代理再重试。
+
 ---
 
 ### Q：为什么首次使用“自动获取模式2”会比较慢？
@@ -211,6 +215,15 @@ python build.py --target cli  # PyInstaller 打包 CLI
 python build.py --target gui --dmg  # macOS 额外生成 DMG
 python build_nuitka.py --target gui  # Nuitka 打包当前平台 GUI
 ```
+
+Nuitka GUI 构建显式包含 Selenium 的 Chrome/Edge 入口，并自动跟随依赖，
+保留 BiDi 扩展安装功能；不包含未使用的版本化 DevTools 协议包。
+Windows/macOS 构建会排除其他系统的 Selenium Manager，保留当前系统的驱动管理程序。
+编译依赖报告位于 `dist-nuitka/<入口文件名>-report.xml`，可用于排查打包遗漏或体积变化。
+
+浏览器集成冒烟测试：`python tests/packaged_selenium_smoke.py chrome edge`。
+需要本机安装对应浏览器并能获取匹配驱动；测试使用临时浏览器配置、本地模拟页面与虚构 Cookie，
+验证 GUI、二维码绘制、扩展加载、网络/页面/Cookie 抓取及驱动退出，不需要登录真实账号。
 
 ## 🧩 配置文件
 

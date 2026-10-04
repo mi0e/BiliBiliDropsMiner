@@ -5,12 +5,15 @@ import logging
 import shutil
 import tempfile
 import threading
-import time
 from collections.abc import Callable, Iterable
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, Literal
 
 from bilibili_drops_miner.client_parts.qr_login import LOGIN_COOKIE_NAMES
+from bilibili_drops_miner.gui_parts.browser_driver import (
+    BrowserPreparationCancelled,
+    prepare_driver,
+)
 from bilibili_drops_miner.gui_parts.browser_utils import (
     browser_label,
     browser_try_order,
@@ -70,8 +73,14 @@ def start_browser_sniff(
     browser_preference: str | None = None,
     finish_on_any: bool = False,
     logger: logging.Logger | None = None,
+    on_preparation_status: Callable[[str], None] | None = None,
+    on_browser_ready: Callable[[], None] | None = None,
+    on_finished: Callable[[], None] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> threading.Thread:
     logger = logger or logging.getLogger(__name__)
+    cancel_event = cancel_event if cancel_event is not None else threading.Event()
+    report_status = on_preparation_status or (lambda _status: None)
 
     def _do() -> None:
         server = None
@@ -135,6 +144,8 @@ def start_browser_sniff(
 
             last_exc = None
             for browser in browser_try_order(browser_preference):
+                if cancel_event.is_set():
+                    raise BrowserPreparationCancelled()
                 if not find_browser(browser):
                     logger.info("未检测到 %s，跳过", browser)
                     continue
@@ -153,7 +164,11 @@ def start_browser_sniff(
                         if browser_binary:
                             opts.binary_location = browser_binary
                         opts.add_argument(f"--load-extension={ext_dir}")
-                        driver = webdriver.Edge(options=opts)
+                        service = prepare_driver(browser, opts, report_status, cancel_event)
+                        report_status("驱动已就绪，正在启动 Microsoft Edge…")
+                        if cancel_event.is_set():
+                            raise BrowserPreparationCancelled()
+                        driver = webdriver.Edge(options=opts, service=service)
                         browser_type = "edge"
                     else:
                         write_chrome_extension(
@@ -171,16 +186,28 @@ def start_browser_sniff(
                         opts.enable_bidi = True
                         opts.enable_webextensions = True
                         opts.add_argument("--remote-allow-origins=*")
-                        driver = webdriver.Chrome(options=opts)
+                        service = prepare_driver(browser, opts, report_status, cancel_event)
+                        report_status("驱动已就绪，正在启动 Google Chrome…")
+                        if cancel_event.is_set():
+                            raise BrowserPreparationCancelled()
+                        driver = webdriver.Chrome(options=opts, service=service)
                         browser_type = "chrome"
                         try:
+                            report_status("正在安装自动获取扩展…")
                             driver.webextension.install(path=ext_dir)
                         except Exception as exc:
                             logger.error("安裝 extension 失败: %s", exc)
 
                     break
+                except BrowserPreparationCancelled:
+                    raise
                 except Exception as exc:
                     last_exc = exc
+                    if driver:
+                        try:
+                            driver.quit()
+                        except Exception:
+                            pass
                     driver = None
                     browser_type = None
                     logger.warning("浏览器 %s 启动失败: %s", browser, exc)
@@ -191,7 +218,15 @@ def start_browser_sniff(
                     f"\n最后错误: {last_exc}"
                 )
 
+            if cancel_event.is_set():
+                raise BrowserPreparationCancelled()
+            report_status("正在打开浏览器页面…")
+            driver.set_page_load_timeout(30)
             driver.get(start_url or "https://www.bilibili.com/")
+            if cancel_event.is_set():
+                raise BrowserPreparationCancelled()
+            if on_browser_ready:
+                on_browser_ready()
             logger.info("%s（浏览器: %s）", hint, browser_label(browser_type or ""))
 
             cookie_done = False
@@ -201,6 +236,8 @@ def start_browser_sniff(
             html_attempts = 0
             last_cookie_count = 0
             for _ in range(120):
+                if cancel_event.is_set():
+                    break
                 if need_cookie and not cookie_done and cookie_captured:
                     current_cookies = cookie_captured[-1]
                     filtered_cookies = select_login_cookies(current_cookies)
@@ -281,8 +318,10 @@ def start_browser_sniff(
                 ):
                     break
 
-                time.sleep(1)
+                cancel_event.wait(1)
 
+        except BrowserPreparationCancelled:
+            logger.info("已取消浏览器准备")
         except ImportError as exc:
             on_error("依赖缺失", f"缺少依赖库，请安装后重试: {exc}\n\n")
         except Exception as exc:
@@ -315,6 +354,8 @@ def start_browser_sniff(
                     pass
             if ext_dir:
                 shutil.rmtree(ext_dir, ignore_errors=True)
+            if on_finished:
+                on_finished()
 
     thread = threading.Thread(target=_do, daemon=True)
     thread.start()

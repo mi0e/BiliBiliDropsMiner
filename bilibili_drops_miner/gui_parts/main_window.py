@@ -735,6 +735,7 @@ class MinerGUI(QMainWindow):
             dialog.close()
             self._qr_login_dialog = None
         self.account_status_controller.close()
+        self.browser_actions.close()
         self._ui_alive = False
         try:
             self.stop()
