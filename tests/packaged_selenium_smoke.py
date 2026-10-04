@@ -82,13 +82,16 @@ def check_browser(browser: str, temp_dir: str) -> None:
     # to our loopback fixture, without modifying DNS or the system hosts file.
     url = "http://live.bilibili.com/12345"
     observations: set[str] = set()
+    statuses: list[str] = []
+    ready = threading.Event()
+    finished = threading.Event()
     errors: list[str] = []
     drivers = []
     attribute = "Chrome" if browser == "chrome" else "Edge"
     original_driver = getattr(webdriver, attribute)
     original_order = browser_sniffer.browser_try_order
 
-    def create_driver(*, options):
+    def create_driver(*, options, service):
         options.add_argument("--headless=new")
         options.add_argument(f"--user-data-dir={Path(temp_dir) / browser}")
         options.add_argument("--no-proxy-server")
@@ -96,7 +99,7 @@ def check_browser(browser: str, temp_dir: str) -> None:
             f"--host-resolver-rules=MAP live.bilibili.com 127.0.0.1:{server.server_port}"
         )
         options.add_argument("--disable-features=HttpsUpgrades")
-        driver = original_driver(options=options)
+        driver = original_driver(options=options, service=service)
         driver.set_page_load_timeout(20)
         drivers.append(driver)
         return driver
@@ -126,11 +129,14 @@ def check_browser(browser: str, temp_dir: str) -> None:
             on_error=lambda title, message: errors.append(f"{title}: {message}"),
             on_network_match=network, on_cookies=cookies,
             on_page_url=room, on_page_html=page, browser_preference=browser,
+            on_preparation_status=statuses.append,
+            on_browser_ready=ready.set, on_finished=finished.set,
         )
         worker.join(timeout=80)
         assert not worker.is_alive(), f"{browser}: sniffer timed out; got {sorted(observations)}"
         assert not errors, errors
         assert observations == {"cookies", "network", "html", "room"}, observations
+        assert statuses and ready.is_set() and finished.is_set()
         assert drivers and all(d.service.process.poll() is not None for d in drivers)
     finally:
         setattr(webdriver, attribute, original_driver)
@@ -141,6 +147,7 @@ def check_browser(browser: str, temp_dir: str) -> None:
         server.server_close()
         server_thread.join(timeout=2)
     print(f"PASS {browser}: extension, cookies, network, page, room and driver cleanup", flush=True)
+    print("Preparation stages: " + json.dumps(statuses, ensure_ascii=True), flush=True)
 
 
 def main() -> None:

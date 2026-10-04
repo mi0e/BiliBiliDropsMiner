@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QInputDialog, QMessageBox, QWidget
 
 from bilibili_drops_miner.client_parts.task_discovery import fetch_live_task_groups
 from bilibili_drops_miner.gui_parts.browser_sniffer import start_browser_sniff
+from bilibili_drops_miner.gui_parts.browser_progress import BrowserPreparationDialog
 from bilibili_drops_miner.gui_parts.browser_utils import (
     available_browsers,
     browser_label,
@@ -43,6 +44,8 @@ class BrowserActions:
         self._logger = logger or logging.getLogger(__name__)
         self._task_discovery_lock = threading.Lock()
         self._task_discovery_pending = False
+        self._browser_cancel: threading.Event | None = None
+        self._preparation_dialog: BrowserPreparationDialog | None = None
 
     @staticmethod
     def find_browser(name: str) -> bool:
@@ -179,22 +182,68 @@ class BrowserActions:
         finish_on_any: bool = False,
         start_url: str | None = None,
     ) -> None:
-        def on_error(title: str, message: str) -> None:
-            self._post_ui_task(self._show_error, title, message)
+        if self._browser_cancel is not None:
+            self._show_warning("提示", "自动获取正在执行，请等待本次操作结束。")
+            return
+        cancel = threading.Event()
+        self._browser_cancel = cancel
+        dialog = BrowserPreparationDialog(self._parent)
+        self._preparation_dialog = dialog
+        dialog.canceled.connect(cancel.set)
+        dialog.show()
 
-        start_browser_sniff(
-            url_keyword,
-            hint,
-            on_error=on_error,
-            on_network_match=on_network_match,
-            on_cookies=on_cookies,
-            on_page_url=on_page_url,
-            on_page_html=on_page_html,
-            browser_preference=browser_preference,
-            finish_on_any=finish_on_any,
-            start_url=start_url,
-            logger=self._logger,
-        )
+        def status(message: str) -> None:
+            self._post_ui_task(update_status, message)
+
+        def update_status(message: str) -> None:
+            if self._preparation_dialog is dialog and not cancel.is_set():
+                dialog.set_status(message)
+
+        def ready() -> None:
+            if self._preparation_dialog is dialog:
+                self._preparation_dialog = None
+                dialog.finish()
+
+        def finished() -> None:
+            ready()
+            if self._browser_cancel is cancel:
+                self._browser_cancel = None
+
+        def on_error(title: str, message: str) -> None:
+            def show_error() -> None:
+                ready()
+                if not cancel.is_set():
+                    self._show_error(title, message)
+            self._post_ui_task(show_error)
+
+        try:
+            start_browser_sniff(
+                url_keyword,
+                hint,
+                on_error=on_error,
+                on_network_match=on_network_match,
+                on_cookies=on_cookies,
+                on_page_url=on_page_url,
+                on_page_html=on_page_html,
+                browser_preference=browser_preference,
+                finish_on_any=finish_on_any,
+                start_url=start_url,
+                logger=self._logger,
+                on_preparation_status=status,
+                on_browser_ready=lambda: self._post_ui_task(ready),
+                on_finished=lambda: self._post_ui_task(finished),
+                cancel_event=cancel,
+            )
+        except Exception:
+            finished()
+            raise
+
+    def close(self) -> None:
+        if self._browser_cancel is not None:
+            self._browser_cancel.set()
+        if self._preparation_dialog is not None:
+            self._preparation_dialog.finish()
+            self._preparation_dialog = None
 
     def auto_fetch_room_id(self) -> None:
         ok = QMessageBox.question(
