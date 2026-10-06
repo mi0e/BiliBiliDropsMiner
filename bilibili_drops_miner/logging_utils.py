@@ -81,6 +81,6 @@ def setup_logging(
         root_logger.addHandler(handler)
 
     app_level = logging.DEBUG if verbose else logging.INFO
-    logging.getLogger("bilibili_miner").setLevel(app_level)
+    logging.getLogger("bilibili_drops_miner").setLevel(app_level)
     for logger_name in ("httpx", "httpcore", "asyncio"):
         logging.getLogger(logger_name).setLevel(logging.WARNING)

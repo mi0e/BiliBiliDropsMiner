@@ -135,10 +135,21 @@ class WebState:
 
     @staticmethod
     def check_rooms(rooms: list[int]) -> None:
+        # 这里抛 ValueError 而不是 HTTPException：加载路径（WebState.__init__）
+        # 用 except (ValueError, KeyError, TypeError, IndexError) 捕获异常并转成
+        # 「数据文件无效」的提示，HTTPException 不在其中，会直接穿透未捕获。
         if any(room <= 0 or room > 10**15 for room in rooms):
-            raise HTTPException(400, "房间号必须是有效的正整数")
+            raise ValueError("房间号必须是有效的正整数")
         if len(set(rooms)) != len(rooms):
-            raise HTTPException(400, "房间号不能重复")
+            raise ValueError("房间号不能重复")
+
+    @classmethod
+    def require_rooms(cls, rooms: list[int]) -> None:
+        """check_rooms 的请求处理入口：把错误信息转成 HTTP 400。"""
+        try:
+            cls.check_rooms(rooms)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
 
     def event(self, message: str) -> None:
         with self.event_lock:
@@ -464,14 +475,24 @@ def create_app(*, data_dir: Path | None = None, password: str | None = None) -> 
 
     @app.post("/api/settings", dependencies=[Depends(authorize)])
     def settings(body: Settings):
-        state.check_rooms(body.room_ids)
+        state.require_rooms(body.room_ids)
         with state.lock:
             state.require_idle()
+            previous = state.settings, state.groups, state.selected, state.generation
             if body.room_ids != state.settings.room_ids:
                 state.groups, state.selected = [], []
                 state.generation = secrets.token_hex(16)
             state.settings = body
-            state.save()
+            try:
+                state.save()
+            except OSError:
+                (
+                    state.settings,
+                    state.groups,
+                    state.selected,
+                    state.generation,
+                ) = previous
+                raise
         return state.snapshot()
 
     @app.post("/api/qr", dependencies=[Depends(authorize)])
@@ -512,8 +533,13 @@ def create_app(*, data_dir: Path | None = None, password: str | None = None) -> 
             if result.status is QrLoginStatus.SUCCESS:
                 with state.lock:
                     state.require_idle()
+                    previous_cookie = state.cookie
                     state.cookie = result.cookie
-                    state.save()
+                    try:
+                        state.save()
+                    except OSError:
+                        state.cookie = previous_cookie
+                        raise
                     state.event("扫码登录成功")
                 state.close_qr()
             elif result.status is QrLoginStatus.EXPIRED:
@@ -525,8 +551,13 @@ def create_app(*, data_dir: Path | None = None, password: str | None = None) -> 
         with state.qr_lock, state.lock:
             state.require_idle()
             state.close_qr()
+            previous_cookie = state.cookie
             state.cookie = ""
-            state.save()
+            try:
+                state.save()
+            except OSError:
+                state.cookie = previous_cookie
+                raise
         return {"ok": True}
 
     @app.post("/api/discover", dependencies=[Depends(authorize)])
