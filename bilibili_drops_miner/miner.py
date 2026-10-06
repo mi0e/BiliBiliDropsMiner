@@ -14,6 +14,9 @@ from bilibili_drops_miner.x25kn_worker import X25KnWorker
 
 LOGGER = logging.getLogger(__name__)
 LOGIN_WATCHDOG_INTERVAL_SECONDS = 60.0
+# 停机时等待所有会话线程退出的总预算。超过后记一条 ERROR 并继续返回，
+# 因为会话线程都是 daemon，留着不影响进程退出，而调用方还在等 run()。
+JOIN_BUDGET_SECONDS = 30.0
 
 
 @dataclass(slots=True)
@@ -67,8 +70,13 @@ class BilibiliWatchTimeMiner:
 
     async def _thread_loop(self, plan: SessionPlan, thread_index: int) -> None:
         # 1s stagger is the bench-verified floor under 128 threads: 0.5s triggers server throttle, 0.75s exhausts local proxy.
+        # 错峰按房间内的连接序号（plan.session_no）计算，而不是 thread_index
+        # ——后者是所有房间展平后的全局序号（见 run 里的 enumerate），会把
+        # 最后一个连接的启动时间按「房间数 × 线程数」线性放大：16 房间 ×
+        # 128 线程时最后一个要等 2047 秒（34 分钟）才建连。单房间场景下
+        # 两者完全一致，所以不影响上面那条基准。
         if thread_index > 1 and await asyncio.to_thread(
-            self._stop_event.wait, (thread_index - 1) * 1
+            self._stop_event.wait, (plan.session_no - 1) * 1
         ):
             return
         if self._stop_event.is_set():
@@ -226,6 +234,12 @@ class BilibiliWatchTimeMiner:
             self.stop(force=self._force_stop_requested)
             join_timeout = 1.2 if self._force_stop_requested else 3.0
             next_warning_at = time.monotonic() + join_timeout
+            # 总预算：这个循环在没有全部线程退出时会一直转，只在每次循环末尾
+            # 打一条警告。run() 返回后调用方（GUI 的 worker 线程 / WebUI 的
+            # join(timeout=25)）仍在等，于是表现为「关了没反应」且无法定位。
+            # 超过预算就记 ERROR 并继续往下走——会话线程是 daemon，留着不
+            # 会阻止进程退出。
+            deadline = time.monotonic() + JOIN_BUDGET_SECONDS
             while True:
                 alive_threads = [
                     thread for thread in self._threads if thread.is_alive()
@@ -250,7 +264,19 @@ class BilibiliWatchTimeMiner:
                         LOGGER.warning("停止未完成，仍有线程未退出: %s", preview)
                     next_warning_at = time.monotonic() + join_timeout
 
-            LOGGER.info("所有连接已停止")
+                if time.monotonic() >= deadline:
+                    stuck = [t.name for t in self._threads if t.is_alive()]
+                    LOGGER.error(
+                        "等待连接线程退出超过 %.0f 秒，放弃等待: %s",
+                        JOIN_BUDGET_SECONDS,
+                        ", ".join(stuck[:5]),
+                    )
+                    break
+
+            if any(thread.is_alive() for thread in self._threads):
+                LOGGER.warning("仍有连接线程未退出，稍后由进程退出回收")
+            else:
+                LOGGER.info("所有连接已停止")
 
             self._threads.clear()
             with self._clients_lock:
