@@ -10,6 +10,7 @@ from bilibili_drops_miner.client import (
     LiveTraceSession,
     TaskProgress,
 )
+from bilibili_drops_miner.client_parts.http import sanitize_exception_text
 from bilibili_drops_miner.config import MinerConfig
 from bilibili_drops_miner.notifier import MultiPlatformNotifier
 
@@ -72,7 +73,7 @@ class X25KnWorker:
                 self._log_warning(
                     "直播间 %s x25Kn 运行异常: %s",
                     self.room_id,
-                    exc,
+                    sanitize_exception_text(exc).strip() or repr(exc),
                     primary_only=True,
                 )
             if not self._stop_event.is_set():
@@ -141,7 +142,11 @@ class X25KnWorker:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                detail = str(exc).strip() or repr(exc)
+                # 必须脱敏：httpx 异常消息携带完整请求 URL，而 x25Kn 心跳的
+                # 查询串里带 benchmark（服务端下发的签名根密钥）与 csrf。
+                # repr 兜底是因为 str(TimeoutError()) 是空串，脱敏后仍为空，
+                # 会打出残缺的日志行。
+                detail = sanitize_exception_text(exc).strip() or repr(exc)
                 self._log_warning(
                     "直播间 %s 观看时长上报失败[%s]: %s",
                     self.room_id,
