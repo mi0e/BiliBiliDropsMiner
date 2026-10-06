@@ -27,7 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt
 from bilibili_drops_miner.client import BilibiliClient
 from bilibili_drops_miner.client_parts.qr_login import QrLoginApi, QrLoginStatus, REQUIRED_LOGIN_COOKIE_NAMES
 from bilibili_drops_miner.client_parts.task_discovery import fetch_live_task_groups
-from bilibili_drops_miner.config import MinerConfig
+from bilibili_drops_miner.config import MAX_ROOM_COUNT, MAX_THREAD_COUNT, MinerConfig
 from bilibili_drops_miner.miner import BilibiliWatchTimeMiner
 from bilibili_drops_miner.utils import parse_cookie, parse_task_ids
 
@@ -64,8 +64,10 @@ class WebLogHandler(logging.Handler):
 
 class Settings(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    room_ids: list[StrictInt] = Field(default_factory=list, max_length=16)
-    thread_count: int = Field(default=1, ge=1, le=128, strict=True)
+    room_ids: list[StrictInt] = Field(default_factory=list, max_length=MAX_ROOM_COUNT)
+    thread_count: int = Field(
+        default=1, ge=1, le=MAX_THREAD_COUNT, strict=True
+    )
     reconnect_delay_seconds: int = Field(default=8, ge=1, le=300, strict=True)
     task_query_interval_seconds: int = Field(default=30, ge=10, le=3600, strict=True)
 

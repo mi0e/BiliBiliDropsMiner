@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from bilibili_drops_miner.config import MinerConfig
+from bilibili_drops_miner.config import MAX_THREAD_COUNT, MinerConfig
 from bilibili_drops_miner.logging_utils import setup_logging
 from bilibili_drops_miner.miner import BilibiliWatchTimeMiner
 from bilibili_drops_miner.utils import parse_room_ids, parse_task_ids
@@ -13,7 +13,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Bilibili Watch-Time Miner")
     parser.add_argument("--cookie", default="", help="Bilibili cookie string")
     parser.add_argument("--rooms", default="", help="Room ids, comma/newline separated")
-    parser.add_argument("--threads", type=int, default=1, help="Sessions per room")
+    parser.add_argument(
+        "--threads",
+        type=int,
+        default=1,
+        help=f"Sessions per room (1-{MAX_THREAD_COUNT})",
+    )
     parser.add_argument(
         "--reconnect-delay", type=int, default=8, help="Reconnect delay in seconds"
     )
