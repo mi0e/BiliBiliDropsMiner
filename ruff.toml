@@ -1,0 +1,24 @@
+target-version = "py312"
+line-length = 100
+exclude = [
+    ".ptmp",
+    ".pytest_cache",
+    ".recycle",
+    "dist",
+    "dist-nuitka",
+    "build",
+]
+
+[lint]
+# 只启用确定性最高的规则集：pyflakes（F，未定义名、未用导入等）与运行时错误
+# （E9，语法/缩进错误）。这两类零误报，且每一条都是真问题。
+#
+# 扩到 E/W/I/B/UP/SIM 的存量约 190 条，其中 136 条是 E501 行长，
+# 一次性开满会让门禁变成噪音而无人落地；逐档放开更容易被接受。
+# 实测当前仓库 F + E9 为 0 条。
+#
+# F821 值得单独一提：它能抓到「except 分支里 logger 名字写错导致异常处理
+# 自身再抛 NameError」这类缺陷，而这类分支往往零测试覆盖。
+select = ["F", "E9"]
+
+ignore = []
