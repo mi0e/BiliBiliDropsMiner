@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -65,7 +66,19 @@ def build_config_payload(
 
 
 def save_config_data(path: str | Path, data: dict[str, Any]) -> None:
-    Path(path).write_text(
-        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    # 原子写入，与 WebState.save 保持一致：直接覆盖目标文件时，写入过程中断电
+    # 或崩溃会留下截断的 JSON，下次启动读取配置就会失败。临时文件名带上 pid，
+    # 避免双开实例写同一个 .tmp 时互相交错。
+    target = Path(path)
+    temporary = target.with_name(f"{target.name}.tmp{os.getpid()}")
+    payload = json.dumps(data, ensure_ascii=False, indent=2)
+    try:
+        with open(temporary, "w", encoding="utf-8") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(target)
+    except OSError:
+        temporary.unlink(missing_ok=True)
+        raise
 
