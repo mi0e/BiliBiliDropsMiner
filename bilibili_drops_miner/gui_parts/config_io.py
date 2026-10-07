@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import stat
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -70,13 +72,28 @@ def save_config_data(path: str | Path, data: dict[str, Any]) -> None:
     # 或崩溃会留下截断的 JSON，下次启动读取配置就会失败。临时文件名带上 pid，
     # 避免双开实例写同一个 .tmp 时互相交错。
     target = Path(path)
-    temporary = target.with_name(f"{target.name}.tmp{os.getpid()}")
     payload = json.dumps(data, ensure_ascii=False, indent=2)
+    # 临时文件放在同一目录确保 os.replace 原子性；随机文件名和 mkstemp 的独占
+    # 创建避免双开实例互相覆盖，也避免同 PID 残留文件被下一次保存截断。
+    # POSIX 上 0600 确保凭据不会在替换时被放宽；Windows 忽略 POSIX mode 参数。
+    # 已有文件的 mode 在最后阶段沿用；若 chmod/replace 失败，旧目标仍不被覆盖。
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=f"{target.name}.tmp{os.getpid()}-", dir=target.parent
+    )
+    temporary = Path(temporary_name)
     try:
-        with open(temporary, "w", encoding="utf-8") as stream:
+        if os.name == "posix":
+            os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
             stream.write(payload)
             stream.flush()
             os.fsync(stream.fileno())
+        try:
+            existing_stat = target.stat()
+        except FileNotFoundError:
+            existing_stat = None
+        if existing_stat is not None and os.name == "posix":
+            os.chmod(temporary, stat.S_IMODE(existing_stat.st_mode))
         temporary.replace(target)
     except OSError:
         temporary.unlink(missing_ok=True)

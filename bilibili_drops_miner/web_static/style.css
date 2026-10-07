@@ -64,6 +64,7 @@ h1 { margin: 0; font-size: 20px; font-weight: 700; line-height: 1.3; letter-spac
 .badge::before, .account-status::before { content: ""; width: 5px; height: 5px; background: currentColor; border-radius: 50%; }
 .badge[data-phase="running"], .account-status[data-connected="true"] { color: var(--success); background: var(--success-bg); border-color: #a7f3d0; }
 .badge[data-phase="starting"], .badge[data-phase="stopping"] { color: var(--primary); background: var(--tint); border-color: #c7d2fe; }
+.badge[data-phase="stop_incomplete"] { color: #b45309; background: #fffbeb; border-color: #fcd34d; }
 .metrics { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(90px, 1fr); gap: 12px; margin: 0; }
 .metrics > div { min-width: 0; }
 .metrics .room-summary { font-size: 18px; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

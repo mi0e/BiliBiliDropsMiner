@@ -394,10 +394,18 @@ class MinerGUI(QMainWindow):
 
     def _poll_worker_shutdown(self) -> None:
         logger = logging.getLogger(__name__)
+        # poll_shutdown() 清理完成时会把 miner 置空；必须在调用前缓存失效状态，
+        # 特别是 owner 已超时返回、经历多个 stopped_incomplete 轮询时。
+        miner = self.worker_controller.miner
+        login_invalidated = bool(miner and miner.login_invalidated)
         result = self.worker_controller.poll_shutdown(logger=logger)
         if result in {"no_thread", "stopped"}:
             self._stop_poll_timer.stop()
             self._finalize_runtime_ui()
+            if result == "stopped" and login_invalidated:
+                self.account_status_controller.mark_current_invalid()
+        # "stopped_incomplete" 时刻意什么都不做：QTimer 会继续轮询，直到会话
+        # 线程真正释放后才收到 "stopped"。日志由 WorkerController 输出。
 
     def _finalize_runtime_ui(self) -> None:
         self._stop_progress_animation()
@@ -679,7 +687,11 @@ class MinerGUI(QMainWindow):
         miner = worker.miner
         if worker.has_thread and not worker.is_running:
             login_invalidated = bool(miner and miner.login_invalidated)
-            worker.poll_shutdown(logger=logging.getLogger(__name__))
+            if worker.poll_shutdown(logger=logging.getLogger(__name__)) == "stopped_incomplete":
+                # 会话线程仍未释放：停掉配置同步，改用停止轮询，等真正停止后再收尾。
+                self._config_sync_timer.stop()
+                self._stop_poll_timer.start()
+                return
             self._finalize_runtime_ui()
             if login_invalidated:
                 self.account_status_controller.mark_current_invalid()

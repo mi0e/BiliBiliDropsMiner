@@ -157,6 +157,63 @@ class GuiAccountStatusTest(unittest.TestCase):
                 )
                 window.close()
 
+    def test_login_invalidated_is_applied_after_residual_sessions_exit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            window = self._window(temp_dir)
+            window.account_status_controller.mark_current_invalid = Mock()
+            miner = SimpleNamespace(login_invalidated=True)
+            worker = SimpleNamespace(
+                has_thread=True,
+                is_running=False,
+                miner=miner,
+                poll_shutdown=Mock(side_effect=["stopped_incomplete", "stopped"]),
+            )
+            window.worker_controller = worker
+            window._start_progress_animation()
+            window._config_sync_timer.start()
+            try:
+                window._sync_config_to_miner()
+                window.account_status_controller.mark_current_invalid.assert_not_called()
+                self.assertIs(worker.miner, miner)
+                window._poll_worker_shutdown()
+                window.account_status_controller.mark_current_invalid.assert_called_once()
+            finally:
+                window._stop_poll_timer.stop()
+                window.worker_controller = SimpleNamespace(
+                    is_running=False,
+                    request_stop=Mock(return_value="not_running"),
+                )
+                window.close()
+
+    def test_finished_worker_with_residual_sessions_is_not_finalized(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            window = self._window(temp_dir)
+            worker = SimpleNamespace(
+                has_thread=True,
+                is_running=False,
+                miner=SimpleNamespace(login_invalidated=False),
+                poll_shutdown=Mock(return_value="stopped_incomplete"),
+            )
+            window.worker_controller = worker
+            window._start_progress_animation()
+            window._config_sync_timer.start()
+            try:
+                window._sync_config_to_miner()
+                worker.poll_shutdown.assert_called_once()
+                # 会话线程仍未释放：不能收尾，改用停止轮询继续等，等真正停止
+                # 后再 finalize。setRange(0, 0) 是「运行中」的不确定进度条，
+                # finalize 会把它恢复成 setRange(0, 1)。
+                self.assertEqual(window.progress_bar.maximum(), 0)
+                self.assertFalse(window._config_sync_timer.isActive())
+                self.assertTrue(window._stop_poll_timer.isActive())
+            finally:
+                window._stop_poll_timer.stop()
+                window.worker_controller = SimpleNamespace(
+                    is_running=False,
+                    request_stop=Mock(return_value="not_running"),
+                )
+                window.close()
+
 
 if __name__ == "__main__":
     unittest.main()
