@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QFontDatabase
+from PySide6.QtGui import QFont, QFontDatabase, QIntValidator
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from bilibili_drops_miner.config import MAX_THREAD_COUNT
 from bilibili_drops_miner.gui_parts.styles import CARD_STYLE, BUTTON_STYLES
 
 
@@ -125,6 +126,9 @@ def build_main_window_layout(
     config_layout.addLayout(_build_labeled_row("通知 URL", notify_urls_edit))
 
     threads_edit = _make_small_edit("1")
+    # 与 WebUI 的 max=128 保持一致：此前这里是无上限的 QLineEdit，输入
+    # 99999 会一路走到 miner 的 range(1, thread_count + 1) 去开线程。
+    threads_edit.setValidator(QIntValidator(1, MAX_THREAD_COUNT, threads_edit))
     reconnect_edit = _make_small_edit("8")
     task_interval_edit = _make_small_edit("30")
     verbose_check = QCheckBox("详细日志")

@@ -2,10 +2,57 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
+
+# 请求 URL 里可能带凭据的参数。httpx 的 HTTPStatusError 消息固定包含完整的
+# request.url，异常一旦被日志记录就会原样落盘，因此这里只打码这些参数的值，
+# 其余部分保持原样以便排查。
+#
+#   csrf / bili_jct / sessdata    B 站登录凭据
+#   access_key / token / sendkey  通知服务的凭据
+#   benchmark                     x25Kn 下发的签名根密钥，拿到即可伪造任意 seq_id
+#                                 的心跳，即伪造观看时长
+#   s                             x25Kn 的请求签名
+#
+# 值匹配到 &、; 或空白为止。; 不作为终止符是有意的：Cookie 形态
+# （SESSDATA=a; bili_jct=b）里两项都是凭据，若在 ; 处截断，bili_jct 会漏网。
+# 这里不要求键名前必须有 ? 或 &，宁可多打码也不漏——正文里的 token=xxx
+# 被一并打码不影响排查。
+_SENSITIVE_PARAM_RE = re.compile(
+    r"(?i)\b"
+    r"(csrf|bili_jct|sessdata|access_key|token|sendkey|benchmark|s)"
+    r"=([^&;\s'\"]+)"
+)
+
+
+def sanitize_url(url: str) -> str:
+    """打码文本中的敏感参数值，保留键名以便排查。"""
+    return _SENSITIVE_PARAM_RE.sub(lambda m: f"{m.group(1)}=***", url)
+
+
+def sanitize_exception_text(exc: BaseException) -> str:
+    return sanitize_url(str(exc))
+
+
+def raise_for_status(response: httpx.Response, method: str) -> None:
+    """等价于 response.raise_for_status()，但异常消息里 URL 的敏感参数已打码。
+
+    raise ... from None 切断异常链是必需的：exc_info=True 打印 traceback 时会
+    连带输出原始异常，而原始 httpx 异常里是未脱敏的完整 URL。
+    """
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise httpx.HTTPStatusError(
+            f"{method} {sanitize_url(str(exc.request.url))} 返回 HTTP "
+            f"{exc.response.status_code}",
+            request=exc.request,
+            response=exc.response,
+        ) from None
 
 
 def is_rate_limited_payload(payload: dict[str, Any]) -> bool:
@@ -92,7 +139,7 @@ async def signed_get_json(
             url=url,
             logger=logger,
         )
-        response.raise_for_status()
+        raise_for_status(response, "GET")
         payload = response.json()
         if payload.get("code") == 0:
             return payload
@@ -134,7 +181,7 @@ async def signed_post_json(
             url=url,
             logger=logger,
         )
-        response.raise_for_status()
+        raise_for_status(response, "POST")
         payload = response.json()
         if payload.get("code") == 0:
             return payload
@@ -176,7 +223,7 @@ async def signed_post_query_json(
             url=url,
             logger=logger,
         )
-        response.raise_for_status()
+        raise_for_status(response, "POST")
         payload = response.json()
         if payload.get("code") == 0:
             return payload
@@ -218,7 +265,7 @@ async def signed_post_form_json(
             url=url,
             logger=logger,
         )
-        response.raise_for_status()
+        raise_for_status(response, "POST")
         payload = response.json()
         if payload.get("code") == 0:
             return payload

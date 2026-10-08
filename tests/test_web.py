@@ -16,6 +16,7 @@ except ImportError:
 
 from bilibili_drops_miner.client_parts.models import MissionRewardClaimResult, TaskProgress
 from bilibili_drops_miner.client_parts.qr_login import QrLoginChallenge, QrLoginStatus, QrPollResult
+from bilibili_drops_miner.miner import StopOutcome
 from bilibili_drops_miner.web import WebState, create_app
 
 
@@ -48,15 +49,33 @@ class FakeMiner:
         self.uid = None
         self.login_invalidated = False
         self.stopped = threading.Event()
+        self.ready = threading.Event()
+        # 未退出会话数：>0 时 run() 之后仍报告 STOP_INCOMPLETE。
+        self.residual_sessions = 0
 
     def run(self):
         time.sleep(0.05)
         self.stopped.clear()
         self.uid = 123
+        self.ready.set()
         self.stopped.wait(2)
+        return self.poll_stop_state()
 
     def stop(self):
         self.stopped.set()
+
+    @property
+    def has_residual_sessions(self):
+        return self.residual_sessions > 0
+
+    @property
+    def residual_session_count(self):
+        return self.residual_sessions
+
+    def poll_stop_state(self):
+        if self.residual_sessions:
+            return StopOutcome.STOP_INCOMPLETE
+        return StopOutcome.STOPPED
 
 
 class WebTests(unittest.TestCase):
@@ -292,6 +311,44 @@ class WebTests(unittest.TestCase):
             self.assertEqual(self.post("stop").status_code, 200)
             self.app.state.web.thread.join(1)
             self.assertFalse(self.app.state.web.thread.is_alive())
+            self.assertEqual(self.client.get("/api/state").json()["phase"], "stopped")
+
+    def test_stop_incomplete_keeps_phase_and_blocks_restart(self):
+        self.login()
+        self.post("settings", {"room_ids": [123]})
+        state = self.app.state.web
+        with patch("bilibili_drops_miner.web.BilibiliWatchTimeMiner", FakeMiner):
+            self.assertEqual(self.post("start").status_code, 200)
+            miner = state.miner
+            # owner 退出时仍有会话线程未释放（超出 JOIN_BUDGET_SECONDS 的场景）。
+            self.assertTrue(miner.ready.wait(1))
+            # 先模拟会话残留，再发停止信号，避免与 run() 返回之间存在竞态。
+            miner.residual_sessions = 2
+            self.assertEqual(self.post("stop").status_code, 200)
+            self.assertTrue(miner.stopped.wait(1))
+
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                if self.client.get("/api/state").json()["phase"] == "stop_incomplete":
+                    break
+                time.sleep(0.02)
+            else:
+                self.fail("phase did not reach stop_incomplete")
+
+            # 连接未真正释放前：线程仍被跟踪，不允许重新启动或改任务。
+            self.assertTrue(state.thread.is_alive())
+            # 再次点停止不应把 stop_incomplete 降级回 stopping。
+            self.assertEqual(self.post("stop").status_code, 200)
+            self.assertEqual(
+                self.client.get("/api/state").json()["phase"], "stop_incomplete"
+            )
+            self.assertEqual(self.post("start").status_code, 409)
+            self.assertEqual(self.post("task-ids", {"task_ids": "x"}).status_code, 409)
+            self.assertEqual(self.client.get("/api/state").json()["active_sessions"], 0)
+
+            miner.residual_sessions = 0
+            state.thread.join(2)
+            self.assertFalse(state.thread.is_alive())
             self.assertEqual(self.client.get("/api/state").json()["phase"], "stopped")
 
     def test_shutdown_stops_active_miner(self):

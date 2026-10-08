@@ -1,0 +1,5 @@
+# 开发与 CI 依赖，不参与运行时打包。
+# 运行时依赖见 requirements.txt（GUI/CLI）与 requirements-web.txt（WebUI）。
+# 用大版本范围而非精确 pin：门禁需要的是「规则行为稳定」，不是锁死补丁版本。
+ruff>=0.16,<1
+pytest>=9,<10

@@ -27,8 +27,8 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt
 from bilibili_drops_miner.client import BilibiliClient
 from bilibili_drops_miner.client_parts.qr_login import QrLoginApi, QrLoginStatus, REQUIRED_LOGIN_COOKIE_NAMES
 from bilibili_drops_miner.client_parts.task_discovery import fetch_live_task_groups
-from bilibili_drops_miner.config import MinerConfig
-from bilibili_drops_miner.miner import BilibiliWatchTimeMiner
+from bilibili_drops_miner.config import MAX_ROOM_COUNT, MAX_THREAD_COUNT, MinerConfig
+from bilibili_drops_miner.miner import BilibiliWatchTimeMiner, StopOutcome
 from bilibili_drops_miner.utils import parse_cookie, parse_task_ids
 
 
@@ -64,8 +64,10 @@ class WebLogHandler(logging.Handler):
 
 class Settings(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    room_ids: list[StrictInt] = Field(default_factory=list, max_length=16)
-    thread_count: int = Field(default=1, ge=1, le=128, strict=True)
+    room_ids: list[StrictInt] = Field(default_factory=list, max_length=MAX_ROOM_COUNT)
+    thread_count: int = Field(
+        default=1, ge=1, le=MAX_THREAD_COUNT, strict=True
+    )
     reconnect_delay_seconds: int = Field(default=8, ge=1, le=300, strict=True)
     task_query_interval_seconds: int = Field(default=30, ge=10, le=3600, strict=True)
 
@@ -135,10 +137,21 @@ class WebState:
 
     @staticmethod
     def check_rooms(rooms: list[int]) -> None:
+        # 这里抛 ValueError 而不是 HTTPException：加载路径（WebState.__init__）
+        # 用 except (ValueError, KeyError, TypeError, IndexError) 捕获异常并转成
+        # 「数据文件无效」的提示，HTTPException 不在其中，会直接穿透未捕获。
         if any(room <= 0 or room > 10**15 for room in rooms):
-            raise HTTPException(400, "房间号必须是有效的正整数")
+            raise ValueError("房间号必须是有效的正整数")
         if len(set(rooms)) != len(rooms):
-            raise HTTPException(400, "房间号不能重复")
+            raise ValueError("房间号不能重复")
+
+    @classmethod
+    def require_rooms(cls, rooms: list[int]) -> None:
+        """check_rooms 的请求处理入口：把错误信息转成 HTTP 400。"""
+        try:
+            cls.check_rooms(rooms)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
 
     def event(self, message: str) -> None:
         with self.event_lock:
@@ -152,7 +165,12 @@ class WebState:
             raise HTTPException(409, "请等待当前操作结束，或先停止挂机")
 
     def require_task_edit(self) -> None:
-        if self.closing or self.discovering or self.task_busy or self.phase == "stopping":
+        if (
+            self.closing
+            or self.discovering
+            or self.task_busy
+            or self.phase in {"stopping", "stop_incomplete"}
+        ):
             raise HTTPException(409, "请等待当前任务操作或停止操作结束")
 
     def sync_running_tasks(self) -> None:
@@ -252,6 +270,17 @@ class WebState:
                 if not self.stop_requested.is_set() and miner.uid is not None:
                     self.phase = "running"
             worker.join(0.1)
+        # owner 已退出，但 run() 可能因超出 JOIN_BUDGET_SECONDS 而保留了未退出的
+        # 会话线程。此时不能切到 stopped：那会让 /api/start 放行一次新挂机，而旧
+        # 连接仍在占用资源。保持 stop_incomplete 直到 poll_stop_state() 确认释放。
+        while miner.poll_stop_state() is StopOutcome.STOP_INCOMPLETE:
+            with self.lock:
+                if self.phase != "stop_incomplete":
+                    self.phase = "stop_incomplete"
+                    self.event(
+                        f"停止未完成，仍有 {miner.residual_session_count} 个连接未释放"
+                    )
+            time.sleep(0.1)
         with self.lock:
             if miner.login_invalidated:
                 self.cookie = ""
@@ -265,11 +294,15 @@ class WebState:
 
     def stop(self) -> None:
         with self.lock:
-            if self.busy():
+            if not self.busy():
+                return
+            # stop_incomplete 期间再点停止不应把状态降级回 stopping：_run 仍在
+            # 跟踪残留连接，降级会让界面闪回并重复写入同一条事件。
+            if self.phase != "stop_incomplete":
                 self.phase = "stopping"
-                self.stop_requested.set()
-                if self.miner:
-                    self.miner.stop()
+            self.stop_requested.set()
+            if self.miner:
+                self.miner.stop()
 
     def shutdown(self) -> None:
         with self.lock:
@@ -464,14 +497,24 @@ def create_app(*, data_dir: Path | None = None, password: str | None = None) -> 
 
     @app.post("/api/settings", dependencies=[Depends(authorize)])
     def settings(body: Settings):
-        state.check_rooms(body.room_ids)
+        state.require_rooms(body.room_ids)
         with state.lock:
             state.require_idle()
+            previous = state.settings, state.groups, state.selected, state.generation
             if body.room_ids != state.settings.room_ids:
                 state.groups, state.selected = [], []
                 state.generation = secrets.token_hex(16)
             state.settings = body
-            state.save()
+            try:
+                state.save()
+            except OSError:
+                (
+                    state.settings,
+                    state.groups,
+                    state.selected,
+                    state.generation,
+                ) = previous
+                raise
         return state.snapshot()
 
     @app.post("/api/qr", dependencies=[Depends(authorize)])
@@ -512,8 +555,13 @@ def create_app(*, data_dir: Path | None = None, password: str | None = None) -> 
             if result.status is QrLoginStatus.SUCCESS:
                 with state.lock:
                     state.require_idle()
+                    previous_cookie = state.cookie
                     state.cookie = result.cookie
-                    state.save()
+                    try:
+                        state.save()
+                    except OSError:
+                        state.cookie = previous_cookie
+                        raise
                     state.event("扫码登录成功")
                 state.close_qr()
             elif result.status is QrLoginStatus.EXPIRED:
@@ -525,8 +573,13 @@ def create_app(*, data_dir: Path | None = None, password: str | None = None) -> 
         with state.qr_lock, state.lock:
             state.require_idle()
             state.close_qr()
+            previous_cookie = state.cookie
             state.cookie = ""
-            state.save()
+            try:
+                state.save()
+            except OSError:
+                state.cookie = previous_cookie
+                raise
         return {"ok": True}
 
     @app.post("/api/discover", dependencies=[Depends(authorize)])

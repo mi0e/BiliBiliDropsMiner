@@ -94,7 +94,7 @@ function controls() {
   if (!current) return;
   const operationPending = [...pending].some(button => button.id !== 'stop');
   const busy = current.phase !== 'stopped' || operationPending;
-  const taskBusy = current.phase === 'stopping' || operationPending;
+  const taskBusy = ['stopping', 'stop_incomplete'].includes(current.phase) || operationPending;
   for (const id of ['qr-button', 'manual-mode', 'logout']) $(id).disabled = busy || pending.has($(id));
   for (const input of $('settings').elements) input.disabled = busy;
   for (const input of $('cookie-form').elements) input.disabled = busy;
@@ -136,7 +136,7 @@ async function refresh(initial = false) {
     $('task-ids').value = (data.manual_task_ids || []).join(', ');
   }
   refreshAccount().catch(() => { accountValid = false; $('account').textContent = '账号校验失败，请重试'; controls(); });
-  $('phase').textContent = ({stopped: '已停止', starting: '正在启动', running: '运行中', stopping: '正在停止'})[data.phase];
+  $('phase').textContent = ({stopped: '已停止', starting: '正在启动', running: '运行中', stopping: '正在停止', stop_incomplete: '停止未完成'})[data.phase];
   $('phase').dataset.phase = data.phase;
   if ($('message').dataset.untilPhase === data.phase || ($('message').dataset.untilPhase === 'running' && data.phase === 'stopped')) message('');
   renderRoom(data.settings.room_ids);

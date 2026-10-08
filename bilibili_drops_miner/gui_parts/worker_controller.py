@@ -6,7 +6,7 @@ import time
 from typing import Literal
 
 from bilibili_drops_miner.config import MinerConfig
-from bilibili_drops_miner.miner import BilibiliWatchTimeMiner
+from bilibili_drops_miner.miner import BilibiliWatchTimeMiner, StopOutcome
 
 StopRequestResult = Literal[
     "not_running",
@@ -14,7 +14,11 @@ StopRequestResult = Literal[
     "force_requested",
     "already_stopping",
 ]
-PollResult = Literal["no_thread", "running", "stopped"]
+PollResult = Literal["no_thread", "running", "stopped", "stopped_incomplete"]
+
+# 「停止未完成」期间重复日志的间隔：首次记 warning，之后按这个周期记 info，
+# 既不刷屏又能让用户看到仍在等待释放。
+STOP_INCOMPLETE_LOG_INTERVAL_SECONDS = 5.0
 
 
 class WorkerController:
@@ -26,6 +30,9 @@ class WorkerController:
         self.stop_poll_started_at: float | None = None
         self.stop_timeout_warned = False
         self.stop_force_sent = False
+        self.stop_outcome: StopOutcome | None = None
+        self.stop_incomplete_warned = False
+        self.stop_incomplete_logged_at: float | None = None
         self.auto_force_stop_after_seconds = auto_force_stop_after_seconds
 
     @property
@@ -50,7 +57,9 @@ class WorkerController:
         def runner() -> None:
             try:
                 if self.miner is not None:
-                    self.miner.run()
+                    # 返回值只用于诊断；「是否真的停止」一律以
+                    # poll_shutdown() 里的 miner.poll_stop_state() 为准。
+                    self.stop_outcome = self.miner.run()
             except Exception:
                 logger.exception("GUI worker crashed")
 
@@ -63,6 +72,17 @@ class WorkerController:
     def request_stop(self, *, logger: logging.Logger) -> StopRequestResult:
         self.stop_signal_set = True
         if not self.is_running:
+            # owner 线程已退出，但 miner 可能仍保留未释放的会话线程。此时不能
+            # 清空引用：那会让「停止未完成」失去跟踪对象，界面也会误判为已停止。
+            if self._has_residual_sessions():
+                self.stopping_in_progress = True
+                if self.stop_poll_started_at is None:
+                    self.stop_poll_started_at = time.monotonic()
+                logger.warning(
+                    "停止未完成，仍有 %s 个连接未释放，继续等待",
+                    self.miner.residual_session_count if self.miner else 0,
+                )
+                return "stopping_started"
             self.worker_thread = None
             self.miner = None
             self._reset_stop_state()
@@ -112,14 +132,49 @@ class WorkerController:
                 self.stop_timeout_warned = True
             return "running"
 
+        # owner 线程已退出，但 run() 可能因超出 JOIN_BUDGET_SECONDS 而保留了
+        # 未退出的会话线程。此时不能报告 stopped：GUI 会清空 miner 引用并放行
+        # 新的启动，而旧连接仍在占用资源。保留所有权并继续轮询，直到
+        # poll_stop_state() 确认全部释放。
+        if self.miner is not None and (
+            self.miner.poll_stop_state() is StopOutcome.STOP_INCOMPLETE
+        ):
+            self._log_stop_incomplete(logger)
+            return "stopped_incomplete"
+
         logger.info("停止成功")
         self.worker_thread = None
         self.miner = None
         self._reset_stop_state()
         return "stopped"
 
+    def _has_residual_sessions(self) -> bool:
+        return self.miner is not None and self.miner.has_residual_sessions
+
+    def _log_stop_incomplete(self, logger: logging.Logger) -> None:
+        remaining = self.miner.residual_session_count if self.miner else 0
+        now = time.monotonic()
+        if not self.stop_incomplete_warned:
+            self.stop_incomplete_warned = True
+            self.stop_incomplete_logged_at = now
+            logger.warning(
+                "停止未完成，仍有 %s 个连接未释放；释放完成前不会报告已停止，"
+                "也无法重新启动",
+                remaining,
+            )
+            return
+        if (
+            self.stop_incomplete_logged_at is None
+            or now - self.stop_incomplete_logged_at >= STOP_INCOMPLETE_LOG_INTERVAL_SECONDS
+        ):
+            self.stop_incomplete_logged_at = now
+            logger.info("仍在等待 %s 个连接释放", remaining)
+
     def _reset_stop_state(self) -> None:
         self.stopping_in_progress = False
         self.stop_poll_started_at = None
         self.stop_timeout_warned = False
         self.stop_force_sent = False
+        self.stop_outcome = None
+        self.stop_incomplete_warned = False
+        self.stop_incomplete_logged_at = None
