@@ -270,17 +270,8 @@ class WebState:
                 if not self.stop_requested.is_set() and miner.uid is not None:
                     self.phase = "running"
             worker.join(0.1)
-        # owner 已退出，但 run() 可能因超出 JOIN_BUDGET_SECONDS 而保留了未退出的
-        # 会话线程。此时不能切到 stopped：那会让 /api/start 放行一次新挂机，而旧
-        # 连接仍在占用资源。保持 stop_incomplete 直到 poll_stop_state() 确认释放。
-        while miner.poll_stop_state() is StopOutcome.STOP_INCOMPLETE:
-            with self.lock:
-                if self.phase != "stop_incomplete":
-                    self.phase = "stop_incomplete"
-                    self.event(
-                        f"停止未完成，仍有 {miner.residual_session_count} 个连接未释放"
-                    )
-            time.sleep(0.1)
+        # 登录失效在 owner 退出时就已确定，与残留会话线程能否释放无关：
+        # 立即清除并落盘失效凭据，不等下面的残留跟踪结束。
         with self.lock:
             if miner.login_invalidated:
                 self.cookie = ""
@@ -289,6 +280,20 @@ class WebState:
                 except OSError:
                     self.event("清除失效凭据时写入失败，请检查数据目录权限")
                 self.event("登录已失效，请重新扫码或填写 Cookie")
+        # owner 已退出，但 run() 可能因超出 JOIN_BUDGET_SECONDS 而保留了未退出的
+        # 会话线程。此时不能切到 stopped：那会让 /api/start 放行一次新挂机，而旧
+        # 连接仍在占用资源。保持 stop_incomplete 直到 poll_stop_state() 确认释放。
+        # 这些线程不响应停止事件，重复停止也无法回收，因此直接提示重启。
+        while miner.poll_stop_state() is StopOutcome.STOP_INCOMPLETE:
+            with self.lock:
+                if self.phase != "stop_incomplete":
+                    self.phase = "stop_incomplete"
+                    self.event(
+                        f"停止未完成：仍有 {miner.residual_session_count} 个连接无法释放，"
+                        "请重启 WebUI 服务或容器后再启动"
+                    )
+            time.sleep(0.1)
+        with self.lock:
             self.phase = "stopped"
             self.event("挂机已停止，连接已释放")
 

@@ -12,8 +12,10 @@ import httpx
 # request.url，异常一旦被日志记录就会原样落盘，因此这里只打码这些参数的值，
 # 其余部分保持原样以便排查。
 #
-#   csrf / bili_jct / sessdata    B 站登录凭据
-#   access_key / token / sendkey  通知服务的凭据
+#   csrf / csrf_token / bili_jct / sessdata    B 站登录凭据
+#   access_key / access_token / token / sendkey  通知服务的凭据
+#   key                           企业微信群机器人 webhook 的 key
+#   qrcode_key                    扫码登录的轮询凭据
 #   benchmark                     x25Kn 下发的签名根密钥，拿到即可伪造任意 seq_id
 #                                 的心跳，即伪造观看时长
 #   s                             x25Kn 的请求签名
@@ -21,10 +23,12 @@ import httpx
 # 值匹配到 &、; 或空白为止。; 不作为终止符是有意的：Cookie 形态
 # （SESSDATA=a; bili_jct=b）里两项都是凭据，若在 ; 处截断，bili_jct 会漏网。
 # 这里不要求键名前必须有 ? 或 &，宁可多打码也不漏——正文里的 token=xxx
-# 被一并打码不影响排查。
+# 被一并打码不影响排查。下划线属于单词字符，\b 不会在 access_token 内部
+# 切出 token，所以带前缀的键名必须逐个列出。
 _SENSITIVE_PARAM_RE = re.compile(
     r"(?i)\b"
-    r"(csrf|bili_jct|sessdata|access_key|token|sendkey|benchmark|s)"
+    r"(csrf_token|csrf|bili_jct|sessdata|access_key|access_token|token|sendkey"
+    r"|qrcode_key|key|benchmark|s)"
     r"=([^&;\s'\"]+)"
 )
 

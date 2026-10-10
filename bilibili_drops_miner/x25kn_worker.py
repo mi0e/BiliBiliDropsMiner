@@ -39,6 +39,9 @@ class X25KnWorker:
         self.primary_session = primary_session
         self.on_task_progress = on_task_progress
         self._stop_event = stop_event or asyncio.Event()
+        # 跨 _run_once 保留：run_forever 每次异常重连都会重建任务监控循环，
+        # 放在循环局部会让同一批已完成任务在重连后再次推送通知。
+        self._notified_completed_ids: set[str] = set()
 
     @property
     def _ctx(self) -> str:
@@ -164,7 +167,7 @@ class X25KnWorker:
 
     async def _task_monitor_loop(self) -> None:
         last_snapshot: dict[str, tuple[int | float, int | float, int]] = {}
-        notified_completed_ids: set[str] = set()
+        notified_completed_ids = self._notified_completed_ids
         while not self._stop_event.is_set():
             task_ids = self.config.task_ids
             wait_seconds = max(10, self.config.task_query_interval_seconds)

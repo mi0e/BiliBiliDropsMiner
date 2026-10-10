@@ -226,5 +226,20 @@ class ClientPartsTest(unittest.TestCase):
         )
 
 
+class SanitizeUrlTest(unittest.TestCase):
+    def test_masks_prefixed_and_webhook_credentials(self) -> None:
+        from bilibili_drops_miner.client_parts.http import sanitize_url
+
+        text = sanitize_url(
+            "https://example.invalid/a?csrf_token=fake1&access_token=fake2"
+            "&key=fake3&qrcode_key=fake4&benchmark=fake5&s=fake6&ts=1&room_id=7"
+        )
+        for secret in ("fake1", "fake2", "fake3", "fake4", "fake5", "fake6"):
+            self.assertNotIn(secret, text)
+        self.assertIn("qrcode_key=***", text)
+        self.assertIn("ts=1", text)
+        self.assertIn("room_id=7", text)
+
+
 if __name__ == "__main__":
     unittest.main()

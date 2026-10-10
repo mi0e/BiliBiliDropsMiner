@@ -107,13 +107,11 @@ class BilibiliWatchTimeMiner:
 
     async def _thread_loop(self, plan: SessionPlan, thread_index: int) -> None:
         # 1s stagger is the bench-verified floor under 128 threads: 0.5s triggers server throttle, 0.75s exhausts local proxy.
-        # 错峰按房间内的连接序号（plan.session_no）计算，而不是 thread_index
-        # ——后者是所有房间展平后的全局序号（见 run 里的 enumerate），会把
-        # 最后一个连接的启动时间按「房间数 × 线程数」线性放大：16 房间 ×
-        # 128 线程时最后一个要等 2047 秒（34 分钟）才建连。单房间场景下
-        # 两者完全一致，所以不影响上面那条基准。
+        # 错峰必须按全局序号 thread_index 计算：该下限约束的是整个进程的建连速率。
+        # 按房间内序号计算会让每个房间的第 N 个连接在同一秒启动，多房间时全局
+        # 速率按房间数倍增，超出实测下限。
         if thread_index > 1 and await asyncio.to_thread(
-            self._stop_event.wait, (plan.session_no - 1) * 1
+            self._stop_event.wait, (thread_index - 1) * 1
         ):
             return
         if self._stop_event.is_set():

@@ -194,12 +194,18 @@ class WorkerControllerTest(unittest.TestCase):
         controller.miner = miner  # type: ignore[assignment]
         controller.worker_thread = FakeThread(alive=False)  # type: ignore[assignment]
 
-        # owner 已退出但有残留：不能走 not_running 的清空路径，必须继续跟踪。
-        self.assertEqual(controller.request_stop(logger=logger), "stopping_started")
+        # owner 已退出但有残留：不能走 not_running 的清空路径，必须继续跟踪，
+        # 并告知调用方这是「停止未完成」，需要重启而不是继续等待。
+        self.assertEqual(controller.request_stop(logger=logger), "stop_incomplete")
         self.assertTrue(controller.stopping_in_progress)
         self.assertTrue(controller.has_thread)
         self.assertIs(controller.miner, miner)
         self.assertTrue(controller.stop_signal_set)
+        self.assertTrue(controller.is_stop_incomplete)
+        self.assertIn("重启", controller.stop_incomplete_message())
+
+        miner.residual_sessions = 0
+        self.assertFalse(controller.is_stop_incomplete)
 
     def test_real_miner_keeps_ownership_until_sessions_release(self) -> None:
         # 上游的最小复现：owner 返回时会话线程仍存活，修复前 poll_shutdown()

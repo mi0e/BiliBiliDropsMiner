@@ -22,6 +22,7 @@ from bilibili_drops_miner.client_parts.cookies import (
 )
 from bilibili_drops_miner.client_parts.http import (
     is_rate_limited_payload,
+    raise_for_status,
     request_with_transient_retry,
     signed_get_json,
     signed_post_form_json,
@@ -120,7 +121,7 @@ class BilibiliClient:
 
     async def nav(self) -> dict[str, Any]:
         response = await self._http.get("https://api.bilibili.com/x/web-interface/nav")
-        response.raise_for_status()
+        raise_for_status(response, "GET")
         payload = response.json()
         validate_nav_payload(payload)
         return payload
@@ -325,7 +326,7 @@ class BilibiliClient:
             method="GET",
             url="https://api.live.bilibili.com/room/v1/Room/get_info",
         )
-        response.raise_for_status()
+        raise_for_status(response, "GET")
         return response.json()
 
     async def get_live_watch_time(
@@ -344,7 +345,7 @@ class BilibiliClient:
             method="GET",
             url="https://api.live.bilibili.com/xlive/general-interface/v1/guard/GuardActive",
         )
-        response.raise_for_status()
+        raise_for_status(response, "GET")
         watch_time, rusername = parse_guard_active_watch_time(
             response.json(),
             resolved_ruid,

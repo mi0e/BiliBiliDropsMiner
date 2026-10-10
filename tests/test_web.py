@@ -351,6 +351,39 @@ class WebTests(unittest.TestCase):
             self.assertFalse(state.thread.is_alive())
             self.assertEqual(self.client.get("/api/state").json()["phase"], "stopped")
 
+    def test_login_invalidated_is_cleared_before_residual_sessions_exit(self):
+        self.login()
+        self.post("settings", {"room_ids": [123]})
+        state = self.app.state.web
+        with patch("bilibili_drops_miner.web.BilibiliWatchTimeMiner", FakeMiner):
+            self.assertEqual(self.post("start").status_code, 200)
+            miner = state.miner
+            self.assertTrue(miner.ready.wait(1))
+            self.assertIn("test-secret", state.cookie)
+            miner.residual_sessions = 1
+            miner.login_invalidated = True
+            self.assertEqual(self.post("stop").status_code, 200)
+
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                if self.client.get("/api/state").json()["phase"] == "stop_incomplete":
+                    break
+                time.sleep(0.02)
+            else:
+                self.fail("phase did not reach stop_incomplete")
+
+            # 残留线程仍在：失效凭据也必须已清除并落盘，提示已给出。
+            self.assertEqual(state.cookie, "")
+            saved = (Path(self.directory.name) / "web-state.json").read_text("utf-8")
+            self.assertNotIn("test-secret", saved)
+            logs = self.client.get("/api/state").json()["logs"]
+            self.assertTrue(any("登录已失效" in line for line in logs))
+            self.assertTrue(any("请重启" in line for line in logs))
+
+            miner.residual_sessions = 0
+            state.thread.join(2)
+            self.assertFalse(state.thread.is_alive())
+
     def test_shutdown_stops_active_miner(self):
         self.login()
         self.post("settings", {"room_ids": [123]})

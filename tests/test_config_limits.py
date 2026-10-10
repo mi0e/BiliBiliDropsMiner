@@ -65,7 +65,10 @@ class RoomCountLimitTest(unittest.TestCase):
 
 class WebUiSettingsShareTheSameLimitsTest(unittest.TestCase):
     def test_settings_use_config_constants(self) -> None:
-        from bilibili_drops_miner.web import Settings
+        try:
+            from bilibili_drops_miner.web import Settings
+        except ImportError:
+            self.skipTest("WebUI 测试需要 requirements-web.txt")
 
         thread_field = Settings.model_fields["thread_count"]
         upper = next(

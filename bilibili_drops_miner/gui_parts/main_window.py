@@ -95,6 +95,10 @@ class MinerGUI(QMainWindow):
         self._account_status = AccountStatus("empty", "")
         self._running_account_uid: int | None = None
         self._account_auto_stop_requested = False
+        # 每次启动重置：「停止未完成」只提示一次；登录失效只标记一次，避免
+        # 残留线程最终退出时把用户期间重新填写的 Cookie 误标为失效。
+        self._stop_incomplete_notified = False
+        self._login_invalid_reported = False
         self.ui_call.connect(self._on_ui_call, Qt.QueuedConnection)
 
         self._build_layout()
@@ -346,6 +350,11 @@ class MinerGUI(QMainWindow):
 
     def start(self) -> None:
         logger = logging.getLogger(__name__)
+        if self.worker_controller.is_stop_incomplete:
+            self._show_warning(
+                "停止未完成", self.worker_controller.stop_incomplete_message()
+            )
+            return
         if self.worker_controller.is_running:
             self._show_info("运行中", "助手已在运行中。")
             return
@@ -373,6 +382,8 @@ class MinerGUI(QMainWindow):
         logger.info("掉宝助手已启动")
         self._running_account_uid = account.uid
         self._account_auto_stop_requested = False
+        self._stop_incomplete_notified = False
+        self._login_invalid_reported = False
         self.task_controller.reset_live_watch_time()
         self._set_live_watch_time_text("本次预估观看时长: 0秒")
         self._start_progress_animation()
@@ -391,6 +402,13 @@ class MinerGUI(QMainWindow):
             self._stop_poll_timer.start()
         elif result == "not_running":
             self._stop_poll_timer.stop()
+        elif result == "stop_incomplete":
+            # 再点停止也无法回收卡住的线程：直接说明需要重启，不让用户空等。
+            self._stop_poll_timer.start()
+            if self._ui_alive:
+                self._show_warning(
+                    "停止未完成", self.worker_controller.stop_incomplete_message()
+                )
 
     def _poll_worker_shutdown(self) -> None:
         logger = logging.getLogger(__name__)
@@ -403,9 +421,31 @@ class MinerGUI(QMainWindow):
             self._stop_poll_timer.stop()
             self._finalize_runtime_ui()
             if result == "stopped" and login_invalidated:
-                self.account_status_controller.mark_current_invalid()
-        # "stopped_incomplete" 时刻意什么都不做：QTimer 会继续轮询，直到会话
-        # 线程真正释放后才收到 "stopped"。日志由 WorkerController 输出。
+                self._report_login_invalidated()
+        elif result == "stopped_incomplete":
+            self._enter_stop_incomplete(login_invalidated)
+
+    def _enter_stop_incomplete(self, login_invalidated: bool) -> None:
+        # owner 已退出：挂机实际已结束，只是有连接卡住。界面立即收尾（进度条、
+        # 计时器）并提示失效 Cookie，但保留停止轮询继续跟踪残留线程的所有权，
+        # 真正释放后由 _poll_worker_shutdown 收到 "stopped"。
+        self._finalize_runtime_ui()
+        self._stop_poll_timer.start()
+        if login_invalidated:
+            self._report_login_invalidated()
+        if self._stop_incomplete_notified or not self._ui_alive:
+            return
+        # 先置位再弹窗：模态对话框期间停止轮询仍会触发，不能重复弹出。
+        self._stop_incomplete_notified = True
+        self._show_warning(
+            "停止未完成", self.worker_controller.stop_incomplete_message()
+        )
+
+    def _report_login_invalidated(self) -> None:
+        if self._login_invalid_reported:
+            return
+        self._login_invalid_reported = True
+        self.account_status_controller.mark_current_invalid()
 
     def _finalize_runtime_ui(self) -> None:
         self._stop_progress_animation()
@@ -688,13 +728,11 @@ class MinerGUI(QMainWindow):
         if worker.has_thread and not worker.is_running:
             login_invalidated = bool(miner and miner.login_invalidated)
             if worker.poll_shutdown(logger=logging.getLogger(__name__)) == "stopped_incomplete":
-                # 会话线程仍未释放：停掉配置同步，改用停止轮询，等真正停止后再收尾。
-                self._config_sync_timer.stop()
-                self._stop_poll_timer.start()
+                self._enter_stop_incomplete(login_invalidated)
                 return
             self._finalize_runtime_ui()
             if login_invalidated:
-                self.account_status_controller.mark_current_invalid()
+                self._report_login_invalidated()
             return
         if miner is None:
             if worker.stop_signal_set or not worker.has_thread:

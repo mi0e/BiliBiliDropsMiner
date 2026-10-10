@@ -157,26 +157,34 @@ class GuiAccountStatusTest(unittest.TestCase):
                 )
                 window.close()
 
-    def test_login_invalidated_is_applied_after_residual_sessions_exit(self) -> None:
+    def test_login_invalidated_is_reported_before_residual_sessions_exit(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             window = self._window(temp_dir)
             window.account_status_controller.mark_current_invalid = Mock()
+            window._show_warning = Mock()
             miner = SimpleNamespace(login_invalidated=True)
             worker = SimpleNamespace(
                 has_thread=True,
                 is_running=False,
                 miner=miner,
-                poll_shutdown=Mock(side_effect=["stopped_incomplete", "stopped"]),
+                poll_shutdown=Mock(
+                    side_effect=["stopped_incomplete", "stopped_incomplete", "stopped"]
+                ),
+                stop_incomplete_message=Mock(return_value="请重启程序"),
             )
             window.worker_controller = worker
             window._start_progress_animation()
             window._config_sync_timer.start()
             try:
+                # owner 退出即可确定登录失效，不等残留会话线程释放。
                 window._sync_config_to_miner()
-                window.account_status_controller.mark_current_invalid.assert_not_called()
+                window.account_status_controller.mark_current_invalid.assert_called_once()
                 self.assertIs(worker.miner, miner)
                 window._poll_worker_shutdown()
+                window._poll_worker_shutdown()
+                # 线程最终释放时不能再标一次：用户期间可能已换了新 Cookie。
                 window.account_status_controller.mark_current_invalid.assert_called_once()
+                window._show_warning.assert_called_once()
             finally:
                 window._stop_poll_timer.stop()
                 window.worker_controller = SimpleNamespace(
@@ -185,14 +193,20 @@ class GuiAccountStatusTest(unittest.TestCase):
                 )
                 window.close()
 
-    def test_finished_worker_with_residual_sessions_is_not_finalized(self) -> None:
+    def test_stop_incomplete_finalizes_ui_and_tells_user_to_restart(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             window = self._window(temp_dir)
+            window._show_warning = Mock()
+            window._show_info = Mock()
             worker = SimpleNamespace(
                 has_thread=True,
                 is_running=False,
+                is_stop_incomplete=True,
                 miner=SimpleNamespace(login_invalidated=False),
                 poll_shutdown=Mock(return_value="stopped_incomplete"),
+                request_stop=Mock(return_value="stop_incomplete"),
+                start=Mock(return_value=False),
+                stop_incomplete_message=Mock(return_value="请重启程序"),
             )
             window.worker_controller = worker
             window._start_progress_animation()
@@ -200,12 +214,28 @@ class GuiAccountStatusTest(unittest.TestCase):
             try:
                 window._sync_config_to_miner()
                 worker.poll_shutdown.assert_called_once()
-                # 会话线程仍未释放：不能收尾，改用停止轮询继续等，等真正停止
-                # 后再 finalize。setRange(0, 0) 是「运行中」的不确定进度条，
-                # finalize 会把它恢复成 setRange(0, 1)。
-                self.assertEqual(window.progress_bar.maximum(), 0)
+                # 挂机已结束：进度条与计时器立即收尾，只保留停止轮询跟踪残留。
+                self.assertFalse(window.progress_bar.isVisible())
+                self.assertEqual(window.progress_bar.maximum(), 1)
                 self.assertFalse(window._config_sync_timer.isActive())
                 self.assertTrue(window._stop_poll_timer.isActive())
+                window._show_warning.assert_called_once_with("停止未完成", "请重启程序")
+
+                # 重复轮询不再弹窗。
+                window._poll_worker_shutdown()
+                window._show_warning.assert_called_once()
+
+                # 点启动：给出「停止未完成」而不是「助手已在运行中」。
+                window._show_warning.reset_mock()
+                window.start()
+                window._show_warning.assert_called_once_with("停止未完成", "请重启程序")
+                window._show_info.assert_not_called()
+                worker.start.assert_not_called()
+
+                # 再点停止：同样直接说明需要重启。
+                window._show_warning.reset_mock()
+                window.stop()
+                window._show_warning.assert_called_once_with("停止未完成", "请重启程序")
             finally:
                 window._stop_poll_timer.stop()
                 window.worker_controller = SimpleNamespace(
