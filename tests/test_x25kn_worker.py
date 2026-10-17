@@ -110,6 +110,43 @@ class X25KnWorkerTest(unittest.TestCase):
         self.assertEqual(client.entry_calls, 1)
         self.assertEqual(client.enter_calls, 1)
 
+    def test_completed_task_is_notified_once_across_reconnects(self) -> None:
+        # run_forever 每次异常都会重建 _task_monitor_loop：已通知集合必须跨轮保留。
+        client = _TaskClient()
+        worker = X25KnWorker(
+            client=client,  # type: ignore[arg-type]
+            notifier=_BlockingNotifier(),  # type: ignore[arg-type]
+            config=MinerConfig(cookie="cookie", room_ids=[1], task_ids=["done"]),
+            uid=42,
+            room_id=1,
+        )
+        dispatched: list[str] = []
+        worker._dispatch_task_complete_notification = (  # type: ignore[method-assign]
+            lambda task: dispatched.append(task.task_id)
+        )
+
+        async def exercise() -> None:
+            for _ in range(2):
+                # 模拟一次重连：新的事件与新的监控循环，worker 实例不变。
+                stop = asyncio.Event()
+                worker._stop_event = stop
+                original = client.get_task_progress
+
+                async def query_then_stop(task_ids, _stop=stop, _original=original):
+                    result = await _original(task_ids)
+                    _stop.set()
+                    return result
+
+                client.get_task_progress = query_then_stop  # type: ignore[method-assign]
+                try:
+                    await asyncio.wait_for(worker._task_monitor_loop(), timeout=1)
+                finally:
+                    client.get_task_progress = original  # type: ignore[method-assign]
+
+        asyncio.run(exercise())
+
+        self.assertEqual(dispatched, ["done"])
+
     def test_blocking_notification_does_not_delay_event_loop_stop(self) -> None:
         notifier = _BlockingNotifier()
         worker = X25KnWorker(

@@ -13,6 +13,7 @@ StopRequestResult = Literal[
     "stopping_started",
     "force_requested",
     "already_stopping",
+    "stop_incomplete",
 ]
 PollResult = Literal["no_thread", "running", "stopped", "stopped_incomplete"]
 
@@ -42,6 +43,22 @@ class WorkerController:
     @property
     def has_thread(self) -> bool:
         return self.worker_thread is not None
+
+    @property
+    def is_stop_incomplete(self) -> bool:
+        """owner 线程已退出，但仍有会话线程未释放。
+
+        这些线程不响应停止事件，force 也无法回收，只能重启进程。
+        """
+        return (
+            self.worker_thread is not None
+            and not self.worker_thread.is_alive()
+            and self._has_residual_sessions()
+        )
+
+    def stop_incomplete_message(self) -> str:
+        remaining = self.miner.residual_session_count if self.miner else 0
+        return f"仍有 {remaining} 个连接无法释放，强制停止也无法回收，请重启程序后再启动"
 
     def start(self, config: MinerConfig, *, logger: logging.Logger) -> bool:
         # A completed worker remains owned until the GUI poll finalizes it.
@@ -78,11 +95,8 @@ class WorkerController:
                 self.stopping_in_progress = True
                 if self.stop_poll_started_at is None:
                     self.stop_poll_started_at = time.monotonic()
-                logger.warning(
-                    "停止未完成，仍有 %s 个连接未释放，继续等待",
-                    self.miner.residual_session_count if self.miner else 0,
-                )
-                return "stopping_started"
+                logger.warning("停止未完成：%s", self.stop_incomplete_message())
+                return "stop_incomplete"
             self.worker_thread = None
             self.miner = None
             self._reset_stop_state()
@@ -157,11 +171,7 @@ class WorkerController:
         if not self.stop_incomplete_warned:
             self.stop_incomplete_warned = True
             self.stop_incomplete_logged_at = now
-            logger.warning(
-                "停止未完成，仍有 %s 个连接未释放；释放完成前不会报告已停止，"
-                "也无法重新启动",
-                remaining,
-            )
+            logger.warning("停止未完成：%s", self.stop_incomplete_message())
             return
         if (
             self.stop_incomplete_logged_at is None

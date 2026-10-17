@@ -59,6 +59,27 @@ class MinerLoginGuardTest(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_stagger_uses_global_thread_index_across_rooms(self) -> None:
+        # 1 秒错峰下限约束的是全局建连速率：第二个房间的首个连接也必须排在
+        # 第一个房间之后，而不是与其同一秒启动。
+        miner = BilibiliWatchTimeMiner(
+            MinerConfig(cookie="cookie", room_ids=[1, 2], thread_count=2)
+        )
+        miner.stop()  # 让错峰等待立即返回，只记录请求的等待时长。
+        waits: list[float] = []
+        original_wait = miner._stop_event.wait
+
+        def record_wait(timeout=None):
+            waits.append(timeout)
+            return original_wait(0)
+
+        miner._stop_event.wait = record_wait  # type: ignore[method-assign]
+        plans = miner._build_session_plans()
+        for thread_index, plan in enumerate(plans, start=1):
+            asyncio.run(miner._thread_loop(plan, thread_index))
+
+        self.assertEqual(waits, [1, 2, 3])
+
     def test_worker_start_failure_does_not_increase_active_count(self) -> None:
         miner = BilibiliWatchTimeMiner(config())
         miner._uid = 42

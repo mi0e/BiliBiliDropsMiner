@@ -53,6 +53,7 @@ function scheduleSync(kind) {
 }
 const pending = new Set();
 let messageTimer = null;
+const STOP_INCOMPLETE_MESSAGE = '有连接无法释放，再次停止也无法回收，请重启 WebUI 服务或容器后再启动';
 function message(text, error = false, untilPhase = '', duration = 5000) {
   clearTimeout(messageTimer);
   $('message').textContent = text;
@@ -139,6 +140,9 @@ async function refresh(initial = false) {
   $('phase').textContent = ({stopped: '已停止', starting: '正在启动', running: '运行中', stopping: '正在停止', stop_incomplete: '停止未完成'})[data.phase];
   $('phase').dataset.phase = data.phase;
   if ($('message').dataset.untilPhase === data.phase || ($('message').dataset.untilPhase === 'running' && data.phase === 'stopped')) message('');
+  if (data.phase === 'stop_incomplete' && $('message').textContent !== STOP_INCOMPLETE_MESSAGE) {
+    message(STOP_INCOMPLETE_MESSAGE, true, 'stopped');
+  }
   renderRoom(data.settings.room_ids);
   $('session-count').textContent = `${data.active_sessions ?? 0}/${data.planned_sessions ?? 0}`;
   const logs = $('logs');
