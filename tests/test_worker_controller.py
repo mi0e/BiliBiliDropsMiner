@@ -197,6 +197,8 @@ class WorkerControllerTest(unittest.TestCase):
         # owner 已退出但有残留：不能走 not_running 的清空路径，必须继续跟踪，
         # 并告知调用方这是「停止未完成」，需要重启而不是继续等待。
         self.assertEqual(controller.request_stop(logger=logger), "stop_incomplete")
+        # 残留会话可能从未收到停止信号，此分支必须补发。
+        self.assertEqual(miner.stop_calls, [True])
         self.assertTrue(controller.stopping_in_progress)
         self.assertTrue(controller.has_thread)
         self.assertIs(controller.miner, miner)

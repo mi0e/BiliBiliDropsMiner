@@ -276,6 +276,35 @@ class MinerLoginGuardTest(unittest.TestCase):
         self.assertEqual(miner._threads, [])
         self.assertEqual(miner._clients, [])
 
+    def test_thread_start_failure_still_stops_started_sessions(self) -> None:
+        miner = BilibiliWatchTimeMiner(
+            MinerConfig(cookie="cookie", room_ids=[1], thread_count=3)
+        )
+        miner._probe_login = AsyncMock(return_value=(42, "user"))
+        real_thread = threading.Thread
+        created = 0
+
+        def thread_factory(*args, **kwargs):
+            nonlocal created
+            created += 1
+            if created == 3:
+                raise RuntimeError("can't start new thread")
+            return real_thread(*args, **kwargs)
+
+        def thread_entry(*_args) -> None:
+            miner._stop_event.wait(timeout=5)
+
+        with patch.object(miner, "_thread_entry", side_effect=thread_entry), patch(
+            "bilibili_drops_miner.miner.threading.Thread", side_effect=thread_factory
+        ):
+            with self.assertRaisesRegex(RuntimeError, "can't start new thread"):
+                miner.run()
+
+        # 已启动的 2 个会话必须收到停止信号并在 run() 返回前退出。
+        self.assertTrue(miner._stop_event.is_set())
+        self.assertFalse(miner.has_residual_sessions)
+        self.assertIs(miner.poll_stop_state(), StopOutcome.STOPPED)
+
     def test_join_budget_is_shared_by_blocking_threads(self) -> None:
         miner = BilibiliWatchTimeMiner(
             MinerConfig(cookie="cookie", room_ids=list(range(1, 9)))

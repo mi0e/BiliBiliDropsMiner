@@ -60,6 +60,15 @@ def is_sniff_finished(
     return any(done_states) if finish_on_any else all(done_states)
 
 
+def _browser_window_open(driver: Any) -> bool:
+    # 用户关掉最后一个窗口后浏览器进程退出，driver 命令会抛出会话失效类异常；
+    # 部分驱动则返回空列表。两种情况都视为已关闭。
+    try:
+        return bool(driver.window_handles)
+    except Exception:
+        return False
+
+
 def start_browser_sniff(
     url_keyword: str | None,
     hint: str,
@@ -91,6 +100,7 @@ def start_browser_sniff(
         cdp_session = None
         try:
             from selenium import webdriver
+            from selenium.common.exceptions import TimeoutException
 
             need_net = bool(url_keyword and on_network_match)
             need_cookie = on_cookies is not None
@@ -221,8 +231,13 @@ def start_browser_sniff(
             if cancel_event.is_set():
                 raise BrowserPreparationCancelled()
             report_status("正在打开浏览器页面…")
+            # 30 秒上限只为让取消/关闭不被 driver.get() 卡住最长 300 秒；超时
+            # 本身不是失败：浏览器已打开，用户仍可在页面里继续登录或手动刷新。
             driver.set_page_load_timeout(30)
-            driver.get(start_url or "https://www.bilibili.com/")
+            try:
+                driver.get(start_url or "https://www.bilibili.com/")
+            except TimeoutException:
+                logger.warning("页面加载超过 30 秒，继续等待；如页面空白请在浏览器中手动刷新")
             if cancel_event.is_set():
                 raise BrowserPreparationCancelled()
             if on_browser_ready:
@@ -237,6 +252,9 @@ def start_browser_sniff(
             last_cookie_count = 0
             for _ in range(120):
                 if cancel_event.is_set():
+                    break
+                if not _browser_window_open(driver):
+                    logger.info("浏览器已关闭，结束自动获取")
                     break
                 if need_cookie and not cookie_done and cookie_captured:
                     current_cookies = cookie_captured[-1]

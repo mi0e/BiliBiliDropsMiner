@@ -183,7 +183,20 @@ class BrowserActions:
         start_url: str | None = None,
     ) -> None:
         if self._browser_cancel is not None:
-            self._show_warning("提示", "自动获取正在执行，请等待本次操作结束。")
+            if self._preparation_dialog is not None or self._browser_cancel.is_set():
+                self._show_warning("提示", "自动获取正在执行，请等待本次操作结束。")
+                return
+            # 浏览器已打开后进度对话框（唯一的取消入口）已关闭，而嗅探循环
+            # 最长还会等 2 分钟；不给出口的话用户只能干等。
+            answer = QMessageBox.question(
+                self._parent,
+                "自动获取正在执行",
+                "上一次自动获取仍在等待浏览器中的操作。<br><br>"
+                "是否结束上一次自动获取？结束后请稍候几秒再重试。",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if answer == QMessageBox.Yes and self._browser_cancel is not None:
+                self._browser_cancel.set()
             return
         cancel = threading.Event()
         self._browser_cancel = cancel

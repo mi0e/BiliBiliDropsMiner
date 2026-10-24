@@ -11,13 +11,14 @@ import unittest
 from unittest.mock import patch
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QPushButton
+from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 from PySide6.QtTest import QTest
 
 from bilibili_drops_miner.gui_parts.browser_driver import (
     BrowserPreparationCancelled, manager_status, prepare_driver, run_manager,
 )
 from bilibili_drops_miner.gui_parts.browser_actions import BrowserActions
+from bilibili_drops_miner.gui_parts.browser_sniffer import _browser_window_open
 
 
 class ManagerProgressTests(unittest.TestCase):
@@ -173,6 +174,39 @@ class BrowserProgressGuiTests(unittest.TestCase):
         self.assertTrue(self.callbacks["cancel_event"].is_set())
         self.assertIsNone(self.actions._preparation_dialog)
 
+
+    def test_click_after_browser_opened_offers_to_end_previous_run(self):
+        # 浏览器打开后进度对话框已关闭；再次点击必须给出结束上一次的出口，
+        # 而不是只提示「请等待」长达 2 分钟。
+        self.callbacks["on_browser_ready"]()
+        question = "bilibili_drops_miner.gui_parts.browser_actions.QMessageBox.question"
+        with patch(question, return_value=QMessageBox.No):
+            self.actions.browser_sniff(None, "retry")
+        self.assertFalse(self.callbacks["cancel_event"].is_set())
+        with patch(question, return_value=QMessageBox.Yes):
+            self.actions.browser_sniff(None, "retry")
+        self.assertTrue(self.callbacks["cancel_event"].is_set())
+        self.assertEqual(self.start.call_count, 1)
+        self.callbacks["on_finished"]()
+        self.actions.browser_sniff(None, "retry")
+        self.assertEqual(self.start.call_count, 2)
+
+
+class BrowserWindowOpenTests(unittest.TestCase):
+    def test_closed_browser_is_detected(self):
+        class Driver:
+            def __init__(self, handles):
+                self.handles = handles
+
+            @property
+            def window_handles(self):
+                if isinstance(self.handles, Exception):
+                    raise self.handles
+                return self.handles
+
+        self.assertTrue(_browser_window_open(Driver(["main"])))
+        self.assertFalse(_browser_window_open(Driver([])))
+        self.assertFalse(_browser_window_open(Driver(RuntimeError("invalid session id"))))
 
 if __name__ == "__main__":
     unittest.main()

@@ -92,6 +92,9 @@ class WorkerController:
             # owner 线程已退出，但 miner 可能仍保留未释放的会话线程。此时不能
             # 清空引用：那会让「停止未完成」失去跟踪对象，界面也会误判为已停止。
             if self._has_residual_sessions():
+                # 残留会话可能从未收到停止信号（例如 run() 在启动线程中途
+                # 抛错）。stop() 是幂等的，重复发送无害，漏发则线程永不退出。
+                self.miner.stop(force=True)
                 self.stopping_in_progress = True
                 if self.stop_poll_started_at is None:
                     self.stop_poll_started_at = time.monotonic()

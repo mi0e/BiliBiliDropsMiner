@@ -232,18 +232,21 @@ class BilibiliWatchTimeMiner:
         elif self.config.notify_urls:
             LOGGER.warning("通知地址已配置但推送服务不可用")
 
-        for thread_index, plan in enumerate(plans, start=1):
-            thread = threading.Thread(
-                target=self._thread_entry,
-                args=(plan, thread_index),
-                name=f"room-{plan.room_id}-s{plan.session_no}",
-                daemon=True,
-            )
-            thread.start()
-            self._threads.append(thread)
-
         next_login_check = time.monotonic() + LOGIN_WATCHDOG_INTERVAL_SECONDS
         try:
+            # 线程启动放在 try 内：启动到一半失败（如 "can't start new
+            # thread"）时，已启动的会话也必须经由 finally 收到停止信号并被跟踪，
+            # 否则它们永远不会退出。
+            for thread_index, plan in enumerate(plans, start=1):
+                thread = threading.Thread(
+                    target=self._thread_entry,
+                    args=(plan, thread_index),
+                    name=f"room-{plan.room_id}-s{plan.session_no}",
+                    daemon=True,
+                )
+                thread.start()
+                self._threads.append(thread)
+
             while not self._stop_event.is_set():
                 if not any(thread.is_alive() for thread in self._threads):
                     break
