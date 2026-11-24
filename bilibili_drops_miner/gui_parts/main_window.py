@@ -43,6 +43,7 @@ from bilibili_drops_miner.gui_parts.update_checker import (
     normalize_version,
     should_check_update,
 )
+from bilibili_drops_miner.gui_parts.about_dialog import show_about_dialog
 from bilibili_drops_miner.gui_parts.update_dialog import show_update_available_dialog
 from bilibili_drops_miner.gui_parts.worker_controller import WorkerController
 from bilibili_drops_miner.logging_utils import setup_logging
@@ -53,11 +54,13 @@ try:
         APP_VERSION,
         LATEST_RELEASE_API,
         RELEASES_URL,
+        REPOSITORY_URL,
         UPDATE_CHANNEL,
     )
 except Exception:
     APP_VERSION = "0.0.0+dev"
     UPDATE_CHANNEL = "dev"
+    REPOSITORY_URL = "https://github.com/mi0e/BiliBiliDropsMiner"
     LATEST_RELEASE_API = (
         "https://api.github.com/repos/mi0e/BiliBiliDropsMiner/releases/latest"
     )
@@ -180,6 +183,7 @@ class MinerGUI(QMainWindow):
                 claim_rewards=self.claim_rewards,
                 refresh_tasks=self.refresh_tasks,
                 toggle_log=self._toggle_log,
+                show_about=self.show_about,
             ),
         )
         self.cookie_edit = widgets.cookie_edit
@@ -196,6 +200,8 @@ class MinerGUI(QMainWindow):
         self.log_text = widgets.log_text
         self._log_toggle_btn = widgets.log_toggle_btn
         self.claim_rewards_btn = widgets.claim_rewards_btn
+        self.start_btn = widgets.start_btn
+        self.stop_btn = widgets.stop_btn
         self.auto_claim_rewards_check = widgets.auto_claim_rewards_check
         self.account_status_label = widgets.account_status_label
         self._log_expanded = False
@@ -329,6 +335,15 @@ class MinerGUI(QMainWindow):
         ):
             webbrowser.open(release_url)
 
+    def show_about(self, *_args) -> None:
+        show_about_dialog(
+            self,
+            app_version=APP_VERSION,
+            update_channel=UPDATE_CHANNEL,
+            repository_url=REPOSITORY_URL,
+            releases_url=RELEASES_URL,
+        )
+
     # ---------- config ----------
 
     def _build_config(self) -> MinerConfig:
@@ -389,6 +404,7 @@ class MinerGUI(QMainWindow):
         self._config_sync_timer.start()
         self._schedule_live_watch_time_refresh()
         self._schedule_task_refresh()
+        self._update_run_buttons()
 
     def stop(self) -> None:
         logger = logging.getLogger(__name__)
@@ -408,6 +424,17 @@ class MinerGUI(QMainWindow):
                 self._show_warning(
                     "停止未完成", self.worker_controller.stop_incomplete_message()
                 )
+        self._update_run_buttons()
+
+    def _update_run_buttons(self) -> None:
+        # 与 WorkerController.start() 的放行条件一致：持有 owner 线程（运行中、
+        # 停止中或停止未完成）时只能停止，完全释放后才能再次启动。
+        if not self._ui_alive:
+            return
+        busy = self.worker_controller.has_thread
+        for button, enabled in ((self.start_btn, not busy), (self.stop_btn, busy)):
+            button.setEnabled(enabled)
+            button.setCursor(Qt.PointingHandCursor if enabled else Qt.ArrowCursor)
 
     def _poll_worker_shutdown(self) -> None:
         logger = logging.getLogger(__name__)
@@ -416,6 +443,7 @@ class MinerGUI(QMainWindow):
         miner = self.worker_controller.miner
         login_invalidated = bool(miner and miner.login_invalidated)
         result = self.worker_controller.poll_shutdown(logger=logger)
+        self._update_run_buttons()
         if result in {"no_thread", "stopped"}:
             self._stop_poll_timer.stop()
             self._finalize_runtime_ui()
@@ -666,7 +694,9 @@ class MinerGUI(QMainWindow):
         miner = worker.miner
         if worker.has_thread and not worker.is_running:
             login_invalidated = bool(miner and miner.login_invalidated)
-            if worker.poll_shutdown(logger=logging.getLogger(__name__)) == "stopped_incomplete":
+            result = worker.poll_shutdown(logger=logging.getLogger(__name__))
+            self._update_run_buttons()
+            if result == "stopped_incomplete":
                 self._enter_stop_incomplete(login_invalidated)
                 return
             self._finalize_runtime_ui()
