@@ -19,7 +19,7 @@
 
 - 多房间并发挂机，支持每房间多会话连接
 - 任务进度自动轮询 + 手动刷新
-- 支持 Gotify、Server 酱通知
+- 支持 Gotify、Server 酱、企业微信通知
 - GUI 支持配置保存/加载、日志查看、自动参数获取等
 
 ## ⚠️ 免责声明
@@ -71,10 +71,14 @@ https://api.bilibili.com/x/task/totalv2?csrf=xxx&task_ids=taskId1,taskId2
 
 ### 通知推送（可选）
 
-常见格式：
+常见格式（内置支持，打包版可用）：
 
-- Gotify: `gotify://host/token`
+- Gotify: `gotify://host/token`（HTTPS 用 `gotifys://`，可加 `?priority=5`）
 - Server 酱: `schan://SendKey`
+- 企业微信群机器人: `wecombot://key`，或直接粘贴 `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...`
+- 企业微信应用: `wxwork://corpid/agentid/secret/?to=@all`
+
+其它格式在源码运行时交给 [Apprise](https://github.com/caronc/apprise) 处理；打包版不包含 Apprise。
 
 多个通知地址可用逗号分隔。
 
@@ -101,6 +105,10 @@ https://api.bilibili.com/x/task/totalv2?csrf=xxx&task_ids=taskId1,taskId2
 仅“自动获取模式2”需要浏览器，并且只支持拉起典型安装路径下的 Chrome / Edge 浏览器；模式 1 是纯 HTTP 静态解析，不会拉起浏览器。
 
 如果浏览器安装在自定义路径，可能无法被自动识别或启动。
+
+首次使用或浏览器升级后，可能需要联网补齐匹配的浏览器驱动。
+此时会显示动态进度条、当前阶段（检查版本、下载驱动、解压、启动浏览器）和已等待时间，支持取消。
+Selenium Manager 不提供下载字节数，因此不显示百分比；每次驱动准备最多等待 6 分钟，失败后可检查网络或代理再重试。
 
 ---
 
@@ -163,6 +171,20 @@ docker compose up -d --build
 | `ports` | `127.0.0.1:23333:23333`，仅本机访问 |
 | `WEB_PASSWORD` | 可选，在 `.env` 中设置；非空时启用认证，用户名 `admin` |
 
+不用 Docker 时也可以本地运行 WebUI：
+
+```bash
+pip install -r requirements-web.txt
+python bilibili_web.py
+```
+
+| 环境变量 | 默认值 / 说明 |
+|------|--------------|
+| `WEB_HOST` | `127.0.0.1`；改成非回环地址对外开放时务必设置 `WEB_PASSWORD` |
+| `WEB_PORT` | `23333` |
+| `WEB_DATA_DIR` | `web-data`，保存 `web-state.json`（含 Cookie，注意权限） |
+| `WEB_PASSWORD` | 同上 |
+
 ### CLI
 
 服务器或纯命令行环境可使用：
@@ -173,22 +195,25 @@ python bilibili.py --cookie "SESSDATA=xxx; bili_jct=xxx" --rooms "23612045"
 
 获取命令帮助：`python bilibili.py --help`
 
-```shell
-Bilibili Drops Miner
-
-Usage: python bilibili.py [OPTIONS]
-
-Options:
-   --cookie COOKIE                        		B站登录 Cookie
-   --rooms ROOMS                          		房间号，逗号分隔
-   --threads THREADS                      		每房间会话数（可加速任务进度）
-   --reconnect-delay RECONNECT_DELAY      		断线重连延迟（秒）
-   --task-ids TASK_IDS                    		用于进度监控的任务 ID
-   --task-interval TASK_INTERVAL          		任务查询间隔（秒）
-   --notify-urls NOTIFY_URLS              		通知 URL，逗号分隔
-   --disable-task-notify                  		关闭任务完成通知	
-   -h, --help                             		显示此帮助信息并退出
+```text
+usage: bilibili.py [-h] [--cookie COOKIE] [--rooms ROOMS] [--threads THREADS]
+                   [--reconnect-delay RECONNECT_DELAY] [--task-ids TASK_IDS]
+                   [--task-interval TASK_INTERVAL] [--notify-urls NOTIFY_URLS]
+                   [--disable-task-notify] [--no-color] [-v]
 ```
+
+| 参数 | 说明 |
+|------|------|
+| `--cookie` | B 站登录 Cookie；留空时交互输入 |
+| `--rooms` | 房间号，逗号或换行分隔；留空时交互输入（最多 16 个） |
+| `--threads` | 每房间会话数，1~128，默认 1 |
+| `--reconnect-delay` | 断线重连延迟（秒），默认 8 |
+| `--task-ids` | 用于进度监控的任务 ID，逗号分隔 |
+| `--task-interval` | 任务查询间隔（秒），默认 30 |
+| `--notify-urls` | 通知 URL，逗号分隔 |
+| `--disable-task-notify` | 关闭任务完成通知 |
+| `--no-color` | 关闭彩色日志 |
+| `-v`, `--verbose` | 输出调试日志 |
 
 示例：
 
@@ -205,12 +230,21 @@ python bilibili.py \
 ## 📦 打包
 
 ```bash
-python build.py               # 开发模式
+python build.py               # PyInstaller 打包当前平台 GUI 与 CLI（默认 --target all）
 python build.py --target gui  # PyInstaller 打包当前平台 GUI
 python build.py --target cli  # PyInstaller 打包 CLI
 python build.py --target gui --dmg  # macOS 额外生成 DMG
 python build_nuitka.py --target gui  # Nuitka 打包当前平台 GUI
 ```
+
+Nuitka GUI 构建显式包含 Selenium 的 Chrome/Edge 入口，并自动跟随依赖，
+保留 BiDi 扩展安装功能；不包含未使用的版本化 DevTools 协议包。
+Windows/macOS 构建会排除其他系统的 Selenium Manager，保留当前系统的驱动管理程序。
+编译依赖报告位于 `dist-nuitka/<入口文件名>-report.xml`，可用于排查打包遗漏或体积变化。
+
+浏览器集成冒烟测试：`python tests/packaged_selenium_smoke.py chrome edge`。
+需要本机安装对应浏览器并能获取匹配驱动；测试使用临时浏览器配置、本地模拟页面与虚构 Cookie，
+验证 GUI、二维码绘制、扩展加载、网络/页面/Cookie 抓取及驱动退出，不需要登录真实账号。
 
 ## 🧩 配置文件
 
@@ -219,16 +253,26 @@ GUI 支持保存/加载 JSON 配置文件，格式可参考 config.example.json�
 
 ## 🧑‍💻 开发
 
-安装开发依赖：
+安装依赖（WebUI 依赖仅在开发或测试 WebUI 时需要）：
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-web.txt -r requirements-dev.txt
 ```
 
 本地调试：
 
 - GUI: `python bilibili_gui.py`
 - CLI: `python bilibili.py --help`
+- WebUI: `python bilibili_web.py`
+
+检查与测试（与 CI 的 `Lint & Test` 工作流一致）：
+
+```bash
+python -m ruff check .
+python -m pytest -q
+```
+
+未安装 `requirements-web.txt` 时 WebUI 测试会被跳过；无显示环境下 `tests/conftest.py` 会自动使用 Qt offscreen 平台。
 
 ## ⭐ Stars
 

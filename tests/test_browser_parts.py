@@ -179,6 +179,16 @@ class BrowserActionsTest(unittest.TestCase):
         def start(self) -> None:
             self.target()
 
+    def setUp(self) -> None:
+        # browser_sniff() 会创建进度对话框（QWidget）。本类不创建 QApplication，
+        # 单独运行本文件时真实对话框会直接 abort；对话框行为由
+        # test_browser_driver.BrowserProgressGuiTests 覆盖。
+        patcher = patch(
+            "bilibili_drops_miner.gui_parts.browser_actions.BrowserPreparationDialog"
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def _build_actions(self) -> tuple[BrowserActions, dict[str, list]]:
         events: dict[str, list] = {
             "warnings": [],

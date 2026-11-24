@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import os
 import threading
 import time
 import unittest
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import httpx
 from PySide6.QtCore import QEvent, Qt

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import enum
 import logging
 import threading
 import time
@@ -14,6 +15,22 @@ from bilibili_drops_miner.x25kn_worker import X25KnWorker
 
 LOGGER = logging.getLogger(__name__)
 LOGIN_WATCHDOG_INTERVAL_SECONDS = 60.0
+# 停机时等待所有会话线程退出的总预算。预算耗尽后不丢弃未退出线程的所有权：
+# run() 返回 STOP_INCOMPLETE 并保留 _threads/_clients，由调用方（GUI 的
+# WorkerController / WebUI 的 _run）继续轮询 poll_stop_state()，直到连接真正
+# 释放才报告「已停止」并允许重新启动。会话线程是 daemon，进程退出时仍会被回收。
+JOIN_BUDGET_SECONDS = 30.0
+
+
+class StopOutcome(enum.Enum):
+    """run() 的结束状态。
+
+    STOP_INCOMPLETE 表示仍有会话线程存活，调用方不得报告「已停止」，
+    也不得放行新的启动——旧连接仍在占用资源。
+    """
+
+    STOPPED = "stopped"
+    STOP_INCOMPLETE = "stop_incomplete"
 
 
 @dataclass(slots=True)
@@ -51,6 +68,29 @@ class BilibiliWatchTimeMiner:
         with self._clients_lock:
             return sum(not task.done() for task in self._session_tasks)
 
+    @property
+    def has_residual_sessions(self) -> bool:
+        """上一次 run() 结束后仍未退出的会话线程。"""
+        return any(thread.is_alive() for thread in self._threads)
+
+    @property
+    def residual_session_count(self) -> int:
+        return sum(1 for thread in self._threads if thread.is_alive())
+
+    def poll_stop_state(self) -> StopOutcome:
+        """回收已退出的会话线程；只有全部退出才清空引用并报告 STOPPED。
+
+        调用方在 owner 线程结束后反复调用本方法，直到返回 STOPPED 才允许
+        报告「已停止」与重新启动。JOIN_BUDGET_SECONDS 耗尽时 run() 会保留
+        未退出线程的引用，正是靠这里继续跟踪并最终释放。
+        """
+        if self.has_residual_sessions:
+            return StopOutcome.STOP_INCOMPLETE
+        self._threads.clear()
+        with self._clients_lock:
+            self._clients.clear()
+        return StopOutcome.STOPPED
+
     def _build_session_plans(self) -> list[SessionPlan]:
         plans: list[SessionPlan] = []
         for room_id in self.config.room_ids:
@@ -67,6 +107,9 @@ class BilibiliWatchTimeMiner:
 
     async def _thread_loop(self, plan: SessionPlan, thread_index: int) -> None:
         # 1s stagger is the bench-verified floor under 128 threads: 0.5s triggers server throttle, 0.75s exhausts local proxy.
+        # 错峰必须按全局序号 thread_index 计算：该下限约束的是整个进程的建连速率。
+        # 按房间内序号计算会让每个房间的第 N 个连接在同一秒启动，多房间时全局
+        # 速率按房间数倍增，超出实测下限。
         if thread_index > 1 and await asyncio.to_thread(
             self._stop_event.wait, (thread_index - 1) * 1
         ):
@@ -150,7 +193,14 @@ class BilibiliWatchTimeMiner:
             LOGGER.exception("直播间连接异常退出: %s", exc)
             self._stop_event.set()
 
-    def run(self) -> None:
+    def run(self) -> StopOutcome:
+        # 上一次停止未完成时不能清空 _threads 重新开始：那些线程仍在占用连接，
+        # 清掉引用就等于丢弃所有权，之后再没有任何地方能跟踪它们的释放。
+        if self.has_residual_sessions:
+            raise RuntimeError(
+                f"上一次停止未完成，仍有 {self.residual_session_count} 个连接线程未退出"
+            )
+
         self._stop_event.clear()
         self._force_stop_requested = False
         self._login_invalidated.clear()
@@ -182,19 +232,21 @@ class BilibiliWatchTimeMiner:
         elif self.config.notify_urls:
             LOGGER.warning("通知地址已配置但推送服务不可用")
 
-        self._threads.clear()
-        for thread_index, plan in enumerate(plans, start=1):
-            thread = threading.Thread(
-                target=self._thread_entry,
-                args=(plan, thread_index),
-                name=f"room-{plan.room_id}-s{plan.session_no}",
-                daemon=True,
-            )
-            thread.start()
-            self._threads.append(thread)
-
         next_login_check = time.monotonic() + LOGIN_WATCHDOG_INTERVAL_SECONDS
         try:
+            # 线程启动放在 try 内：启动到一半失败（如 "can't start new
+            # thread"）时，已启动的会话也必须经由 finally 收到停止信号并被跟踪，
+            # 否则它们永远不会退出。
+            for thread_index, plan in enumerate(plans, start=1):
+                thread = threading.Thread(
+                    target=self._thread_entry,
+                    args=(plan, thread_index),
+                    name=f"room-{plan.room_id}-s{plan.session_no}",
+                    daemon=True,
+                )
+                thread.start()
+                self._threads.append(thread)
+
             while not self._stop_event.is_set():
                 if not any(thread.is_alive() for thread in self._threads):
                     break
@@ -217,8 +269,9 @@ class BilibiliWatchTimeMiner:
                     next_login_check = (
                         time.monotonic() + LOGIN_WATCHDOG_INTERVAL_SECONDS
                     )
-                for thread in self._threads:
-                    thread.join(timeout=0.5)
+                # 等停止事件而不是逐个 join：逐个 join(0.5) 让一轮耗时随会话数
+                # 线性增长（128 会话约 64 秒），登录复检被拖得远超 60 秒。
+                self._stop_event.wait(timeout=0.5)
         except KeyboardInterrupt:
             LOGGER.info("收到停止信号，正在停止...")
             self.stop()
@@ -226,6 +279,14 @@ class BilibiliWatchTimeMiner:
             self.stop(force=self._force_stop_requested)
             join_timeout = 1.2 if self._force_stop_requested else 3.0
             next_warning_at = time.monotonic() + join_timeout
+            # 总预算：这个循环在没有全部线程退出时会一直转，只在每轮末尾打一条
+            # 警告。run() 返回后调用方（GUI 的 worker 线程 / WebUI 的
+            # join(timeout=25)）仍在等，于是表现为「关了没反应」且无法定位。
+            #
+            # 预算必须在每次 join 前重算：原先只在整轮 for 之后检查，每个存活
+            # 线程单独 join(0.2)，16 房间 × 128 连接全阻塞时一轮就要 409.6 秒，
+            # 30 秒预算形同虚设。
+            deadline = time.monotonic() + JOIN_BUDGET_SECONDS
             while True:
                 alive_threads = [
                     thread for thread in self._threads if thread.is_alive()
@@ -233,11 +294,18 @@ class BilibiliWatchTimeMiner:
                 if not alive_threads:
                     break
 
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+
                 # Keep the miner's owner thread alive until every session has
                 # released its client and event loop. The GUI polls this owner
                 # thread, so these short joins never block the GUI thread.
                 for thread in alive_threads:
-                    thread.join(timeout=0.2)
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    thread.join(timeout=min(0.2, remaining))
 
                 if time.monotonic() >= next_warning_at:
                     alive_names = [
@@ -250,11 +318,24 @@ class BilibiliWatchTimeMiner:
                         LOGGER.warning("停止未完成，仍有线程未退出: %s", preview)
                     next_warning_at = time.monotonic() + join_timeout
 
-            LOGGER.info("所有连接已停止")
+            # 预算耗尽时不清空 _threads / _clients：那些线程仍持有连接，
+            # 清掉引用就等于丢弃所有权，调用方将无法判断「是否真的停止」，
+            # 界面会误报已停止并放行新的启动。交由 poll_stop_state() 继续跟踪，
+            # 直到全部退出才回收引用。
+            outcome = self.poll_stop_state()
+            if outcome is StopOutcome.STOP_INCOMPLETE:
+                stuck = [thread.name for thread in self._threads if thread.is_alive()]
+                LOGGER.error(
+                    "等待连接线程退出超过 %.0f 秒，保留 %s 个未退出会话的所有权交由调用方继续跟踪: %s",
+                    JOIN_BUDGET_SECONDS,
+                    len(stuck),
+                    ", ".join(stuck[:5]),
+                )
+            else:
+                LOGGER.info("所有连接已停止")
 
-            self._threads.clear()
-            with self._clients_lock:
-                self._clients.clear()
+        # 放在 finally 之外：finally 里 return 会吞掉 try 中传播的异常。
+        return outcome
 
     def stop(self, *, force: bool = False) -> None:
         # Keep GUI compatibility: force flag is accepted and can tighten join budget.

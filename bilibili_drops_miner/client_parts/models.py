@@ -4,14 +4,6 @@ from dataclasses import dataclass, field
 
 
 @dataclass(slots=True)
-class DanmuServerConf:
-    room_id: int
-    token: str
-    host: str
-    wss_port: int
-
-
-@dataclass(slots=True)
 class LiveRoomInfo:
     room_id: int
     ruid: int

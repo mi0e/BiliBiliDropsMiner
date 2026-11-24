@@ -53,6 +53,7 @@ function scheduleSync(kind) {
 }
 const pending = new Set();
 let messageTimer = null;
+const STOP_INCOMPLETE_MESSAGE = '有连接无法释放，再次停止也无法回收，请重启 WebUI 服务或容器后再启动';
 function message(text, error = false, untilPhase = '', duration = 5000) {
   clearTimeout(messageTimer);
   $('message').textContent = text;
@@ -94,7 +95,7 @@ function controls() {
   if (!current) return;
   const operationPending = [...pending].some(button => button.id !== 'stop');
   const busy = current.phase !== 'stopped' || operationPending;
-  const taskBusy = current.phase === 'stopping' || operationPending;
+  const taskBusy = ['stopping', 'stop_incomplete'].includes(current.phase) || operationPending;
   for (const id of ['qr-button', 'manual-mode', 'logout']) $(id).disabled = busy || pending.has($(id));
   for (const input of $('settings').elements) input.disabled = busy;
   for (const input of $('cookie-form').elements) input.disabled = busy;
@@ -136,9 +137,12 @@ async function refresh(initial = false) {
     $('task-ids').value = (data.manual_task_ids || []).join(', ');
   }
   refreshAccount().catch(() => { accountValid = false; $('account').textContent = '账号校验失败，请重试'; controls(); });
-  $('phase').textContent = ({stopped: '已停止', starting: '正在启动', running: '运行中', stopping: '正在停止'})[data.phase];
+  $('phase').textContent = ({stopped: '已停止', starting: '正在启动', running: '运行中', stopping: '正在停止', stop_incomplete: '停止未完成'})[data.phase];
   $('phase').dataset.phase = data.phase;
   if ($('message').dataset.untilPhase === data.phase || ($('message').dataset.untilPhase === 'running' && data.phase === 'stopped')) message('');
+  if (data.phase === 'stop_incomplete' && $('message').textContent !== STOP_INCOMPLETE_MESSAGE) {
+    message(STOP_INCOMPLETE_MESSAGE, true, 'stopped');
+  }
   renderRoom(data.settings.room_ids);
   $('session-count').textContent = `${data.active_sessions ?? 0}/${data.planned_sessions ?? 0}`;
   const logs = $('logs');

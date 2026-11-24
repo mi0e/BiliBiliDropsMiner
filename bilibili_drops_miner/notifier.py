@@ -113,7 +113,12 @@ class _NativeNotifyTarget:
             params={"corpid": corpid, "corpsecret": secret},
             timeout=10.0,
         )
-        token_response.raise_for_status()
+        if token_response.status_code >= 400:
+            # 只报状态码，不回显 URL：corpsecret 就在查询串里。用户只要把企业微信
+            # 通知地址配错一次（应用停用、IP 白名单变更、corpid 敲错都会返回 4xx），
+            # 密钥就会经 notify() 的日志明文显示出来，拿到后可换取 access_token，
+            # 以该应用身份向所有成员发消息。
+            raise RuntimeError(f"企业微信 gettoken 失败: HTTP {token_response.status_code}")
         token_payload = token_response.json()
         access_token = token_payload.get("access_token")
         if not access_token:

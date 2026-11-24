@@ -41,6 +41,11 @@ def parse_task_ids(raw: str) -> list[str]:
     return task_ids
 
 
+def parse_notify_urls(raw: str) -> list[str]:
+    # 不能复用 parse_task_ids：它会在 & 处截断，丢掉通知 URL 的后续查询参数。
+    return [url.strip() for url in raw.replace("\n", ",").split(",") if url.strip()]
+
+
 def _extract_json_object_after_marker(raw: str, marker: str) -> dict:
     marker_index = raw.find(marker)
     if marker_index < 0:

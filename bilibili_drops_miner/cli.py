@@ -3,17 +3,22 @@ from __future__ import annotations
 import argparse
 import sys
 
-from bilibili_drops_miner.config import MinerConfig
+from bilibili_drops_miner.config import MAX_THREAD_COUNT, MinerConfig
 from bilibili_drops_miner.logging_utils import setup_logging
-from bilibili_drops_miner.miner import BilibiliWatchTimeMiner
-from bilibili_drops_miner.utils import parse_room_ids, parse_task_ids
+from bilibili_drops_miner.miner import BilibiliWatchTimeMiner, StopOutcome
+from bilibili_drops_miner.utils import parse_notify_urls, parse_room_ids, parse_task_ids
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Bilibili Watch-Time Miner")
     parser.add_argument("--cookie", default="", help="Bilibili cookie string")
     parser.add_argument("--rooms", default="", help="Room ids, comma/newline separated")
-    parser.add_argument("--threads", type=int, default=1, help="Sessions per room")
+    parser.add_argument(
+        "--threads",
+        type=int,
+        default=1,
+        help=f"Sessions per room (1-{MAX_THREAD_COUNT})",
+    )
     parser.add_argument(
         "--reconnect-delay", type=int, default=8, help="Reconnect delay in seconds"
     )
@@ -64,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
         cookie = _resolve_cookie(args)
         room_ids = _resolve_rooms(args)
         task_ids = parse_task_ids(args.task_ids)
-        notify_urls = parse_task_ids(args.notify_urls)
+        notify_urls = parse_notify_urls(args.notify_urls)
         config = MinerConfig(
             cookie=cookie,
             room_ids=room_ids,
@@ -77,7 +82,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         config.validate()
         miner = BilibiliWatchTimeMiner(config)
-        miner.run()
+        outcome = miner.run()
+        if outcome is StopOutcome.STOP_INCOMPLETE:
+            # 超出 JOIN_BUDGET_SECONDS：仍有会话线程未退出。CLI 没有继续跟踪的
+            # 调用方，进程退出时 daemon 线程会被回收，这里只如实报告。
+            print("警告：停止未完成，仍有连接线程未退出", file=sys.stderr)
         return 0
     except KeyboardInterrupt:
         return 0

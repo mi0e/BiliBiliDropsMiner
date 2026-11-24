@@ -10,6 +10,7 @@ from bilibili_drops_miner.client import (
     LiveTraceSession,
     TaskProgress,
 )
+from bilibili_drops_miner.client_parts.http import sanitize_exception_text
 from bilibili_drops_miner.config import MinerConfig
 from bilibili_drops_miner.notifier import MultiPlatformNotifier
 
@@ -38,6 +39,9 @@ class X25KnWorker:
         self.primary_session = primary_session
         self.on_task_progress = on_task_progress
         self._stop_event = stop_event or asyncio.Event()
+        # 跨 _run_once 保留：run_forever 每次异常重连都会重建任务监控循环，
+        # 放在循环局部会让同一批已完成任务在重连后再次推送通知。
+        self._notified_completed_ids: set[str] = set()
 
     @property
     def _ctx(self) -> str:
@@ -72,7 +76,7 @@ class X25KnWorker:
                 self._log_warning(
                     "直播间 %s x25Kn 运行异常: %s",
                     self.room_id,
-                    exc,
+                    sanitize_exception_text(exc).strip() or repr(exc),
                     primary_only=True,
                 )
             if not self._stop_event.is_set():
@@ -141,7 +145,11 @@ class X25KnWorker:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                detail = str(exc).strip() or repr(exc)
+                # 必须脱敏：httpx 异常消息携带完整请求 URL，而 x25Kn 心跳的
+                # 查询串里带 benchmark（服务端下发的签名根密钥）与 csrf。
+                # repr 兜底是因为 str(TimeoutError()) 是空串，脱敏后仍为空，
+                # 会打出残缺的日志行。
+                detail = sanitize_exception_text(exc).strip() or repr(exc)
                 self._log_warning(
                     "直播间 %s 观看时长上报失败[%s]: %s",
                     self.room_id,
@@ -159,7 +167,7 @@ class X25KnWorker:
 
     async def _task_monitor_loop(self) -> None:
         last_snapshot: dict[str, tuple[int | float, int | float, int]] = {}
-        notified_completed_ids: set[str] = set()
+        notified_completed_ids = self._notified_completed_ids
         while not self._stop_event.is_set():
             task_ids = self.config.task_ids
             wait_seconds = max(10, self.config.task_query_interval_seconds)

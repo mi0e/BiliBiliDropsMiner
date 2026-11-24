@@ -1,0 +1,80 @@
+name: Lint & Test
+
+# 独立于 build.yml：本工作流不做任何打包，只做静态检查与测试，
+# 因此可以在 pull_request 上快速反馈，而不占用双平台编译的 runner 分钟。
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dev dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+
+      - name: Run ruff
+        run: python -m ruff check .
+
+  test:
+    name: Test (pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      # PySide6 在导入 QtGui/QtWidgets 时就dlopen 这些系统库，缺任何一个都会
+      # 在收集期 ImportError（不是运行期）。QT_QPA_PLATFORM=offscreen 只能挡掉
+      # 「需要显示服务」那一层，挡不住动态库缺失，所以这里必须装系统包。
+      - name: Install Qt runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libegl1 \
+            libgl1 \
+            libglib2.0-0 \
+            libfontconfig1 \
+            libdbus-1-3 \
+            libxkbcommon0 \
+            libxkbcommon-x11-0
+
+      - name: Install dependencies
+        # requirements-web.txt 是必需的：tests/test_web.py 在导入期发现没有
+        # fastapi 就 raise unittest.SkipTest，只装 requirements.txt 会让 28 个
+        # WebUI 用例被静默跳过——CI 显示全绿，实际什么都没测。
+        run: |
+          python -m pip install --disable-pip-version-check -r requirements.txt
+          python -m pip install --disable-pip-version-check -r requirements-web.txt
+          python -m pip install --disable-pip-version-check pytest
+
+      # GUI 相关用例需要无显示环境。tests/conftest.py 已在导入 PySide6 之前
+      # 设好 QT_QPA_PLATFORM，这里再显式声明一次，让本步骤在 Actions 日志里
+      # 自解释，也保证即使 conftest 将来被改动也能兜住。
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest tests/ -q
+
+      - name: Report collected tests
+        # 防止「全部被 skip 也能绿」：把实际执行数量打进日志，便于 review。
+        run: python -m pytest tests/ --collect-only -q | tail -n 3
