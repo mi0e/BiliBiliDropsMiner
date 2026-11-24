@@ -19,7 +19,7 @@
 
 - 多房间并发挂机，支持每房间多会话连接
 - 任务进度自动轮询 + 手动刷新
-- 支持 Gotify、Server 酱通知
+- 支持 Gotify、Server 酱、企业微信通知
 - GUI 支持配置保存/加载、日志查看、自动参数获取等
 
 ## ⚠️ 免责声明
@@ -71,10 +71,14 @@ https://api.bilibili.com/x/task/totalv2?csrf=xxx&task_ids=taskId1,taskId2
 
 ### 通知推送（可选）
 
-常见格式：
+常见格式（内置支持，打包版可用）：
 
-- Gotify: `gotify://host/token`
+- Gotify: `gotify://host/token`（HTTPS 用 `gotifys://`，可加 `?priority=5`）
 - Server 酱: `schan://SendKey`
+- 企业微信群机器人: `wecombot://key`，或直接粘贴 `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...`
+- 企业微信应用: `wxwork://corpid/agentid/secret/?to=@all`
+
+其它格式在源码运行时交给 [Apprise](https://github.com/caronc/apprise) 处理；打包版不包含 Apprise。
 
 多个通知地址可用逗号分隔。
 
@@ -167,6 +171,20 @@ docker compose up -d --build
 | `ports` | `127.0.0.1:23333:23333`，仅本机访问 |
 | `WEB_PASSWORD` | 可选，在 `.env` 中设置；非空时启用认证，用户名 `admin` |
 
+不用 Docker 时也可以本地运行 WebUI：
+
+```bash
+pip install -r requirements-web.txt
+python bilibili_web.py
+```
+
+| 环境变量 | 默认值 / 说明 |
+|------|--------------|
+| `WEB_HOST` | `127.0.0.1`；改成非回环地址对外开放时务必设置 `WEB_PASSWORD` |
+| `WEB_PORT` | `23333` |
+| `WEB_DATA_DIR` | `web-data`，保存 `web-state.json`（含 Cookie，注意权限） |
+| `WEB_PASSWORD` | 同上 |
+
 ### CLI
 
 服务器或纯命令行环境可使用：
@@ -177,22 +195,25 @@ python bilibili.py --cookie "SESSDATA=xxx; bili_jct=xxx" --rooms "23612045"
 
 获取命令帮助：`python bilibili.py --help`
 
-```shell
-Bilibili Drops Miner
-
-Usage: python bilibili.py [OPTIONS]
-
-Options:
-   --cookie COOKIE                        		B站登录 Cookie
-   --rooms ROOMS                          		房间号，逗号分隔
-   --threads THREADS                      		每房间会话数（可加速任务进度）
-   --reconnect-delay RECONNECT_DELAY      		断线重连延迟（秒）
-   --task-ids TASK_IDS                    		用于进度监控的任务 ID
-   --task-interval TASK_INTERVAL          		任务查询间隔（秒）
-   --notify-urls NOTIFY_URLS              		通知 URL，逗号分隔
-   --disable-task-notify                  		关闭任务完成通知	
-   -h, --help                             		显示此帮助信息并退出
+```text
+usage: bilibili.py [-h] [--cookie COOKIE] [--rooms ROOMS] [--threads THREADS]
+                   [--reconnect-delay RECONNECT_DELAY] [--task-ids TASK_IDS]
+                   [--task-interval TASK_INTERVAL] [--notify-urls NOTIFY_URLS]
+                   [--disable-task-notify] [--no-color] [-v]
 ```
+
+| 参数 | 说明 |
+|------|------|
+| `--cookie` | B 站登录 Cookie；留空时交互输入 |
+| `--rooms` | 房间号，逗号或换行分隔；留空时交互输入（最多 16 个） |
+| `--threads` | 每房间会话数，1~128，默认 1 |
+| `--reconnect-delay` | 断线重连延迟（秒），默认 8 |
+| `--task-ids` | 用于进度监控的任务 ID，逗号分隔 |
+| `--task-interval` | 任务查询间隔（秒），默认 30 |
+| `--notify-urls` | 通知 URL，逗号分隔 |
+| `--disable-task-notify` | 关闭任务完成通知 |
+| `--no-color` | 关闭彩色日志 |
+| `-v`, `--verbose` | 输出调试日志 |
 
 示例：
 
@@ -209,7 +230,7 @@ python bilibili.py \
 ## 📦 打包
 
 ```bash
-python build.py               # 开发模式
+python build.py               # PyInstaller 打包当前平台 GUI 与 CLI（默认 --target all）
 python build.py --target gui  # PyInstaller 打包当前平台 GUI
 python build.py --target cli  # PyInstaller 打包 CLI
 python build.py --target gui --dmg  # macOS 额外生成 DMG
@@ -232,16 +253,26 @@ GUI 支持保存/加载 JSON 配置文件，格式可参考 config.example.json�
 
 ## 🧑‍💻 开发
 
-安装开发依赖：
+安装依赖（WebUI 依赖仅在开发或测试 WebUI 时需要）：
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-web.txt -r requirements-dev.txt
 ```
 
 本地调试：
 
 - GUI: `python bilibili_gui.py`
 - CLI: `python bilibili.py --help`
+- WebUI: `python bilibili_web.py`
+
+检查与测试（与 CI 的 `Lint & Test` 工作流一致）：
+
+```bash
+python -m ruff check .
+python -m pytest -q
+```
+
+未安装 `requirements-web.txt` 时 WebUI 测试会被跳过；无显示环境下 `tests/conftest.py` 会自动使用 Qt offscreen 平台。
 
 ## ⭐ Stars
 
