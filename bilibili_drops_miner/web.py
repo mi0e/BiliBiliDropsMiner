@@ -16,6 +16,7 @@ from collections import deque
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import qrcode
 import qrcode.image.svg
@@ -201,6 +202,18 @@ class WebState:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
             json.dump(payload, stream, ensure_ascii=False)
         temporary.replace(path)
+
+    def update_and_save(self, **changes: Any) -> None:
+        # Called under self.lock; restores the in-memory fields if the write fails.
+        previous = {name: getattr(self, name) for name in changes}
+        for name, value in changes.items():
+            setattr(self, name, value)
+        try:
+            self.save()
+        except OSError:
+            for name, value in previous.items():
+                setattr(self, name, value)
+            raise
 
     def task_context(self) -> tuple:
         # Called under self.lock; results belong to this account and task selection.
@@ -389,10 +402,6 @@ def create_app(*, data_dir: Path | None = None, password: str | None = None) -> 
         # Do not echo submitted credentials or arbitrary input in error responses.
         return JSONResponse({"detail": "参数无效，请检查房间号和数值范围"}, status_code=422)
 
-    @app.exception_handler(Exception)
-    async def safe_error(_request, _exc):
-        return JSONResponse({"detail": "操作失败，请检查网络或数据目录权限后重试"}, status_code=500)
-
     @app.get("/healthz")
     def health():
         return {"ok": not state.closing}
@@ -473,13 +482,7 @@ def create_app(*, data_dir: Path | None = None, password: str | None = None) -> 
         with state.qr_lock, state.lock:
             state.require_idle()
             state.close_qr()
-            previous_cookie = state.cookie
-            state.cookie = cookie
-            try:
-                state.save()
-            except OSError:
-                state.cookie = previous_cookie
-                raise
+            state.update_and_save(cookie=cookie)
             state.event("手动 Cookie 已保存")
         return {"ok": True}
 
@@ -490,13 +493,7 @@ def create_app(*, data_dir: Path | None = None, password: str | None = None) -> 
             raise HTTPException(400, "最多填写 100 个任务 ID，每个不超过 256 字符")
         with state.lock:
             state.require_task_edit()
-            previous_ids = state.manual_task_ids
-            state.manual_task_ids = task_ids
-            try:
-                state.save()
-            except OSError:
-                state.manual_task_ids = previous_ids
-                raise
+            state.update_and_save(manual_task_ids=task_ids)
             state.sync_running_tasks()
         return {"ok": True, "task_ids": task_ids}
 
@@ -505,21 +502,10 @@ def create_app(*, data_dir: Path | None = None, password: str | None = None) -> 
         state.require_rooms(body.room_ids)
         with state.lock:
             state.require_idle()
-            previous = state.settings, state.groups, state.selected, state.generation
+            changes: dict[str, Any] = {"settings": body}
             if body.room_ids != state.settings.room_ids:
-                state.groups, state.selected = [], []
-                state.generation = secrets.token_hex(16)
-            state.settings = body
-            try:
-                state.save()
-            except OSError:
-                (
-                    state.settings,
-                    state.groups,
-                    state.selected,
-                    state.generation,
-                ) = previous
-                raise
+                changes.update(groups=[], selected=[], generation=secrets.token_hex(16))
+            state.update_and_save(**changes)
         return state.snapshot()
 
     @app.post("/api/qr", dependencies=[Depends(authorize)])
@@ -560,13 +546,7 @@ def create_app(*, data_dir: Path | None = None, password: str | None = None) -> 
             if result.status is QrLoginStatus.SUCCESS:
                 with state.lock:
                     state.require_idle()
-                    previous_cookie = state.cookie
-                    state.cookie = result.cookie
-                    try:
-                        state.save()
-                    except OSError:
-                        state.cookie = previous_cookie
-                        raise
+                    state.update_and_save(cookie=result.cookie)
                     state.event("扫码登录成功")
                 state.close_qr()
             elif result.status is QrLoginStatus.EXPIRED:
@@ -578,13 +558,7 @@ def create_app(*, data_dir: Path | None = None, password: str | None = None) -> 
         with state.qr_lock, state.lock:
             state.require_idle()
             state.close_qr()
-            previous_cookie = state.cookie
-            state.cookie = ""
-            try:
-                state.save()
-            except OSError:
-                state.cookie = previous_cookie
-                raise
+            state.update_and_save(cookie="")
         return {"ok": True}
 
     @app.post("/api/discover", dependencies=[Depends(authorize)])
@@ -606,15 +580,11 @@ def create_app(*, data_dir: Path | None = None, password: str | None = None) -> 
             with state.lock:
                 if state.closing:
                     raise HTTPException(409, "服务正在关闭")
-                previous = state.groups, state.selected, state.generation
-                state.groups = groups
-                state.selected = [i for i, group in enumerate(groups) if group.get("active")]
-                state.generation = secrets.token_hex(16)
-                try:
-                    state.save()
-                except OSError:
-                    state.groups, state.selected, state.generation = previous
-                    raise
+                state.update_and_save(
+                    groups=groups,
+                    selected=[i for i, group in enumerate(groups) if group.get("active")],
+                    generation=secrets.token_hex(16),
+                )
                 state.sync_running_tasks()
                 state.event(f"静态 HTML 解析完成：发现 {len(groups)} 个任务分组")
             return state.snapshot()
@@ -630,13 +600,7 @@ def create_app(*, data_dir: Path | None = None, password: str | None = None) -> 
                 raise HTTPException(409, "任务分组已更新，请刷新页面")
             if any(i < 0 or i >= len(state.groups) for i in body.groups):
                 raise HTTPException(400, "任务分组无效")
-            previous = state.selected
-            state.selected = list(dict.fromkeys(body.groups))
-            try:
-                state.save()
-            except OSError:
-                state.selected = previous
-                raise
+            state.update_and_save(selected=list(dict.fromkeys(body.groups)))
             state.sync_running_tasks()
         return {"ok": True}
 
