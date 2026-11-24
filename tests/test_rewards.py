@@ -1,14 +1,14 @@
 from __future__ import annotations
 
+import json
 import logging
 import unittest
 from unittest.mock import AsyncMock, call, patch
 
+import httpx
+
 from bilibili_drops_miner.client_parts.core import BilibiliClient
-from bilibili_drops_miner.client_parts.http import (
-    signed_get_json,
-    signed_post_form_json,
-)
+from bilibili_drops_miner.client_parts.http import signed_request_json
 from bilibili_drops_miner.client_parts.models import (
     MissionRewardClaimResult,
     MissionRewardInfo,
@@ -217,16 +217,48 @@ class _FakeHttp:
         self.get_calls = 0
         self.post_calls = 0
 
-    async def get(self, *args, **kwargs) -> _FakeResponse:
-        self.get_calls += 1
-        return _FakeResponse(self.payload)
-
-    async def post(self, *args, **kwargs) -> _FakeResponse:
-        self.post_calls += 1
+    async def request(self, method: str, *args, **kwargs) -> _FakeResponse:
+        if method == "GET":
+            self.get_calls += 1
+        else:
+            self.post_calls += 1
         return _FakeResponse(self.payload)
 
 
 class SignedRequestRetryTest(unittest.IsolatedAsyncioTestCase):
+    async def test_request_wire_format_for_query_form_and_json(self) -> None:
+        requests: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(200, json={"code": 0})
+
+        async def sign_wbi(params: dict) -> dict:
+            return {**params, "w_rid": "sig"}
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            common = dict(
+                http=http,
+                sign_wbi=sign_wbi,
+                clear_wbi_cache=lambda: None,
+                logger=logging.getLogger(__name__),
+                url="https://example.invalid/api",
+                params={"csrf": "c"},
+            )
+            await signed_request_json(method="GET", **common)
+            await signed_request_json(method="POST", data={"task_id": "t"}, **common)
+            await signed_request_json(method="POST", json={"room_id": 1}, **common)
+
+        self.assertEqual([r.method for r in requests], ["GET", "POST", "POST"])
+        for request in requests:
+            self.assertEqual(dict(request.url.params), {"csrf": "c", "w_rid": "sig"})
+        self.assertEqual(requests[0].content, b"")
+        self.assertEqual(requests[1].content, b"task_id=t")
+        self.assertEqual(
+            requests[1].headers["Content-Type"], "application/x-www-form-urlencoded"
+        )
+        self.assertEqual(json.loads(requests[2].content), {"room_id": 1})
+
     async def test_rate_limit_does_not_trigger_immediate_wbi_retry(self) -> None:
         http = _FakeHttp({"code": -509, "message": "请求过于频繁"})
         clear_calls = 0
@@ -238,11 +270,12 @@ class SignedRequestRetryTest(unittest.IsolatedAsyncioTestCase):
             nonlocal clear_calls
             clear_calls += 1
 
-        payload = await signed_get_json(
+        payload = await signed_request_json(
             http=http,  # type: ignore[arg-type]
             sign_wbi=sign_wbi,
             clear_wbi_cache=clear_wbi_cache,
             logger=logging.getLogger(__name__),
+            method="GET",
             url="https://example.invalid",
             params={},
         )
@@ -262,11 +295,12 @@ class SignedRequestRetryTest(unittest.IsolatedAsyncioTestCase):
             nonlocal clear_calls
             clear_calls += 1
 
-        await signed_get_json(
+        await signed_request_json(
             http=http,  # type: ignore[arg-type]
             sign_wbi=sign_wbi,
             clear_wbi_cache=clear_wbi_cache,
             logger=logging.getLogger(__name__),
+            method="GET",
             url="https://example.invalid",
             params={},
         )
@@ -285,14 +319,15 @@ class SignedRequestRetryTest(unittest.IsolatedAsyncioTestCase):
             nonlocal clear_calls
             clear_calls += 1
 
-        payload = await signed_post_form_json(
+        payload = await signed_request_json(
             http=http,  # type: ignore[arg-type]
             sign_wbi=sign_wbi,
             clear_wbi_cache=clear_wbi_cache,
             logger=logging.getLogger(__name__),
+            method="POST",
             url="https://example.invalid",
             params={},
-            body={},
+            data={},
         )
 
         self.assertEqual(payload["code"], -509)
@@ -308,7 +343,7 @@ class _RateLimitedMissionClient:
     def _mission_headers(task_id: str) -> dict[str, str]:
         return {}
 
-    async def _signed_get_json(self, *args, **kwargs) -> dict:
+    async def _signed_json(self, *args, **kwargs) -> dict:
         self.calls += 1
         return {"code": -509, "message": "请求过于频繁"}
 

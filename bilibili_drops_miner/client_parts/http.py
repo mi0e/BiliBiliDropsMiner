@@ -65,20 +65,6 @@ def is_rate_limited_payload(payload: dict[str, Any]) -> bool:
     return code in {"-702", "-509"} or "频率" in message or "频繁" in message
 
 
-def _should_retry_with_fresh_wbi(
-    payload: dict[str, Any],
-    *,
-    retry: int,
-    retry_on_wbi_miss: bool,
-) -> bool:
-    # 限频需要由调用方按退避策略处理，不能在刷新 WBI 时立即重复请求。
-    return (
-        retry == 0
-        and retry_on_wbi_miss
-        and not is_rate_limited_payload(payload)
-    )
-
-
 async def request_with_transient_retry(
     request_coro: Callable[[], Awaitable[httpx.Response]],
     *,
@@ -116,170 +102,34 @@ async def request_with_transient_retry(
     raise RuntimeError("unreachable retry state")
 
 
-async def signed_get_json(
+async def signed_request_json(
     *,
     http: httpx.AsyncClient,
     sign_wbi: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]],
     clear_wbi_cache: Callable[[], None],
     logger: logging.Logger,
+    method: str,
     url: str,
     params: dict[str, Any],
-    headers: dict[str, str] | None = None,
-    follow_redirects: bool = False,
-    retry_on_wbi_miss: bool = True,
+    **request_kwargs: Any,
 ) -> dict[str, Any]:
+    """WBI 签名请求：params 签名后作为查询串，request_kwargs（headers/json/data/
+    follow_redirects）原样传给 httpx。非 0 响应最多刷新一次 WBI 密钥后重试。"""
     payload: dict[str, Any] = {}
-    retries = 2 if retry_on_wbi_miss else 1
-    for retry in range(retries):
+    for retry in range(2):
         signed_params = await sign_wbi(params)
         response = await request_with_transient_retry(
-            lambda: http.get(
-                url,
-                params=signed_params,
-                headers=headers,
-                follow_redirects=follow_redirects,
-            ),
-            method="GET",
+            lambda: http.request(method, url, params=signed_params, **request_kwargs),
+            method=method,
             url=url,
             logger=logger,
         )
-        raise_for_status(response, "GET")
+        raise_for_status(response, method)
         payload = response.json()
         if payload.get("code") == 0:
             return payload
-        if _should_retry_with_fresh_wbi(
-            payload,
-            retry=retry,
-            retry_on_wbi_miss=retry_on_wbi_miss,
-        ):
-            clear_wbi_cache()
-            continue
-        break
+        # 限频需要由调用方按退避策略处理，不能在刷新 WBI 时立即重复请求。
+        if retry > 0 or is_rate_limited_payload(payload):
+            break
+        clear_wbi_cache()
     return payload
-
-
-async def signed_post_json(
-    *,
-    http: httpx.AsyncClient,
-    sign_wbi: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]],
-    clear_wbi_cache: Callable[[], None],
-    logger: logging.Logger,
-    url: str,
-    params: dict[str, Any],
-    body: dict[str, Any],
-    headers: dict[str, str] | None = None,
-    retry_on_wbi_miss: bool = True,
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {}
-    retries = 2 if retry_on_wbi_miss else 1
-    for retry in range(retries):
-        signed_params = await sign_wbi(params)
-        response = await request_with_transient_retry(
-            lambda: http.post(
-                url,
-                params=signed_params,
-                json=body,
-                headers=headers,
-            ),
-            method="POST",
-            url=url,
-            logger=logger,
-        )
-        raise_for_status(response, "POST")
-        payload = response.json()
-        if payload.get("code") == 0:
-            return payload
-        if _should_retry_with_fresh_wbi(
-            payload,
-            retry=retry,
-            retry_on_wbi_miss=retry_on_wbi_miss,
-        ):
-            clear_wbi_cache()
-            continue
-        break
-    return payload
-
-
-async def signed_post_query_json(
-    *,
-    http: httpx.AsyncClient,
-    sign_wbi: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]],
-    clear_wbi_cache: Callable[[], None],
-    logger: logging.Logger,
-    url: str,
-    params: dict[str, Any],
-    headers: dict[str, str] | None = None,
-    follow_redirects: bool = False,
-    retry_on_wbi_miss: bool = True,
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {}
-    retries = 2 if retry_on_wbi_miss else 1
-    for retry in range(retries):
-        signed_params = await sign_wbi(params)
-        response = await request_with_transient_retry(
-            lambda: http.post(
-                url,
-                params=signed_params,
-                headers=headers,
-                follow_redirects=follow_redirects,
-            ),
-            method="POST",
-            url=url,
-            logger=logger,
-        )
-        raise_for_status(response, "POST")
-        payload = response.json()
-        if payload.get("code") == 0:
-            return payload
-        if _should_retry_with_fresh_wbi(
-            payload,
-            retry=retry,
-            retry_on_wbi_miss=retry_on_wbi_miss,
-        ):
-            clear_wbi_cache()
-            continue
-        break
-    return payload
-
-
-async def signed_post_form_json(
-    *,
-    http: httpx.AsyncClient,
-    sign_wbi: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]],
-    clear_wbi_cache: Callable[[], None],
-    logger: logging.Logger,
-    url: str,
-    params: dict[str, Any],
-    body: dict[str, Any],
-    headers: dict[str, str] | None = None,
-    retry_on_wbi_miss: bool = True,
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {}
-    retries = 2 if retry_on_wbi_miss else 1
-    for retry in range(retries):
-        signed_params = await sign_wbi(params)
-        response = await request_with_transient_retry(
-            lambda: http.post(
-                url,
-                params=signed_params,
-                data=body,
-                headers=headers,
-            ),
-            method="POST",
-            url=url,
-            logger=logger,
-        )
-        raise_for_status(response, "POST")
-        payload = response.json()
-        if payload.get("code") == 0:
-            return payload
-        if _should_retry_with_fresh_wbi(
-            payload,
-            retry=retry,
-            retry_on_wbi_miss=retry_on_wbi_miss,
-        ):
-            clear_wbi_cache()
-            continue
-        break
-    return payload
-
