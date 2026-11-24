@@ -24,13 +24,9 @@ from bilibili_drops_miner.client_parts.http import (
     is_rate_limited_payload,
     raise_for_status,
     request_with_transient_retry,
-    signed_get_json,
-    signed_post_form_json,
-    signed_post_json,
-    signed_post_query_json,
+    signed_request_json,
 )
 from bilibili_drops_miner.client_parts.live import (
-    parse_danmu_server_conf,
     parse_guard_active_watch_time,
     parse_live_room_info,
     parse_room_owner_uid,
@@ -46,7 +42,6 @@ from bilibili_drops_miner.client_parts.live_trace import (
     live_trace_session_from_enter_payload,
 )
 from bilibili_drops_miner.client_parts.models import (
-    DanmuServerConf,
     LiveRoomInfo,
     LiveTraceSession,
     LiveWatchTime,
@@ -199,112 +194,33 @@ class BilibiliClient:
             logger=LOGGER,
         )
 
-    async def _signed_get_json(
+    async def _signed_json(
         self,
+        method: str,
         url: str,
         params: dict[str, Any],
-        *,
-        headers: dict[str, str] | None = None,
-        follow_redirects: bool = False,
-        retry_on_wbi_miss: bool = True,
+        **request_kwargs: Any,
     ) -> dict[str, Any]:
-        return await signed_get_json(
+        return await signed_request_json(
             http=self._http,
             sign_wbi=self.sign_wbi,
             clear_wbi_cache=self._clear_wbi_cache,
             logger=LOGGER,
+            method=method,
             url=url,
             params=params,
-            headers=headers,
-            follow_redirects=follow_redirects,
-            retry_on_wbi_miss=retry_on_wbi_miss,
+            **request_kwargs,
         )
-
-    async def _signed_post_json(
-        self,
-        url: str,
-        params: dict[str, Any],
-        body: dict[str, Any],
-        *,
-        headers: dict[str, str] | None = None,
-        retry_on_wbi_miss: bool = True,
-    ) -> dict[str, Any]:
-        return await signed_post_json(
-            http=self._http,
-            sign_wbi=self.sign_wbi,
-            clear_wbi_cache=self._clear_wbi_cache,
-            logger=LOGGER,
-            url=url,
-            params=params,
-            body=body,
-            headers=headers,
-            retry_on_wbi_miss=retry_on_wbi_miss,
-        )
-
-    async def _signed_post_query_json(
-        self,
-        url: str,
-        params: dict[str, Any],
-        *,
-        headers: dict[str, str] | None = None,
-        follow_redirects: bool = False,
-        retry_on_wbi_miss: bool = True,
-    ) -> dict[str, Any]:
-        return await signed_post_query_json(
-            http=self._http,
-            sign_wbi=self.sign_wbi,
-            clear_wbi_cache=self._clear_wbi_cache,
-            logger=LOGGER,
-            url=url,
-            params=params,
-            headers=headers,
-            follow_redirects=follow_redirects,
-            retry_on_wbi_miss=retry_on_wbi_miss,
-        )
-
-    async def _signed_post_form_json(
-        self,
-        url: str,
-        params: dict[str, Any],
-        body: dict[str, Any],
-        *,
-        headers: dict[str, str] | None = None,
-        retry_on_wbi_miss: bool = True,
-    ) -> dict[str, Any]:
-        return await signed_post_form_json(
-            http=self._http,
-            sign_wbi=self.sign_wbi,
-            clear_wbi_cache=self._clear_wbi_cache,
-            logger=LOGGER,
-            url=url,
-            params=params,
-            body=body,
-            headers=headers,
-            retry_on_wbi_miss=retry_on_wbi_miss,
-        )
-
-    async def get_danmu_server(self, room_id: int) -> DanmuServerConf:
-        payload = await self._signed_get_json(
-            "https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo",
-            {
-                "id": room_id,
-                "type": 0,
-                "web_location": "444.8",
-            },
-            headers=self._live_headers(room_id),
-            retry_on_wbi_miss=True,
-        )
-        return parse_danmu_server_conf(payload, room_id)
 
     async def get_live_room_info(self, room_id: int) -> LiveRoomInfo:
-        payload = await self._signed_get_json(
+        payload = await self._signed_json(
+            "GET",
             "https://api.live.bilibili.com/xlive/web-room/v1/index/getInfoByRoom",
             {
                 "room_id": room_id,
                 "web_location": "444.8",
             },
             headers=self._live_headers(room_id),
-            retry_on_wbi_miss=True,
         )
         return parse_live_room_info(payload, room_id)
 
@@ -360,12 +276,12 @@ class BilibiliClient:
     async def room_entry_action(self, room_id: int) -> None:
         if not self.bili_jct:
             raise ValueError("cookie 缺少 bili_jct，无法上报 roomEntryAction")
-        payload = await self._signed_post_json(
+        payload = await self._signed_json(
+            "POST",
             "https://api.live.bilibili.com/xlive/web-room/v1/index/roomEntryAction",
             {"csrf": self.bili_jct},
-            {"room_id": room_id, "platform": "pc"},
+            json={"room_id": room_id, "platform": "pc"},
             headers=self._live_headers(room_id),
-            retry_on_wbi_miss=True,
         )
         if payload.get("code") != 0:
             raise ValueError(
@@ -423,11 +339,11 @@ class BilibiliClient:
             csrf=self.bili_jct,
             ts_ms=int(time.time() * 1000),
         )
-        payload = await self._signed_post_query_json(
+        payload = await self._signed_json(
+            "POST",
             "https://live-trace.bilibili.com/xlive/data-interface/v1/x25Kn/E",
             params,
             headers=self._live_headers(room.room_id, lite=True),
-            retry_on_wbi_miss=True,
         )
         if payload.get("code") != 0:
             raise ValueError(
@@ -473,12 +389,12 @@ class BilibiliClient:
             ts_ms=ts_ms,
         )
 
-        payload = await self._signed_post_query_json(
+        payload = await self._signed_json(
+            "POST",
             "https://live-trace.bilibili.com/xlive/data-interface/v1/x25Kn/X",
             params,
             headers=self._live_headers(session.room_id, lite=True),
             follow_redirects=True,
-            retry_on_wbi_miss=True,
         )
 
         if payload.get("code") != 0:
@@ -501,7 +417,8 @@ class BilibiliClient:
         if not self.bili_jct:
             raise ValueError("cookie 缺少 bili_jct，无法查询任务进度")
 
-        payload = await self._signed_get_json(
+        payload = await self._signed_json(
+            "GET",
             "https://api.bilibili.com/x/task/totalv2",
             {
                 "csrf": self.bili_jct,
@@ -514,7 +431,6 @@ class BilibiliClient:
                 "User-Agent": self.user_agent,
                 "Cookie": self.cookie_header,
             },
-            retry_on_wbi_miss=True,
         )
         return parse_task_progress_payload(payload)
 
@@ -525,11 +441,11 @@ class BilibiliClient:
         for attempt, delay in enumerate(MISSION_RETRY_DELAYS, start=1):
             if delay > 0:
                 await asyncio.sleep(delay)
-            payload = await self._signed_get_json(
+            payload = await self._signed_json(
+                "GET",
                 "https://api.bilibili.com/x/activity_components/mission/info",
                 {"task_id": normalized_id},
                 headers=self._mission_headers(normalized_id),
-                retry_on_wbi_miss=True,
             )
             if payload.get("code") == 0 or not self._is_rate_limited_payload(payload):
                 break
@@ -564,15 +480,15 @@ class BilibiliClient:
         for attempt, delay in enumerate(MISSION_RETRY_DELAYS, start=1):
             if delay > 0:
                 await asyncio.sleep(delay)
-            payload = await self._signed_post_form_json(
+            payload = await self._signed_json(
+                "POST",
                 "https://api.bilibili.com/x/activity_components/mission/receive",
                 {},
-                body,
+                data=body,
                 headers={
                     **self._mission_headers(info.task_id),
                     "Content-Type": "application/x-www-form-urlencoded",
                 },
-                retry_on_wbi_miss=True,
             )
             if payload.get("code") == 0 or not self._is_rate_limited_payload(payload):
                 break

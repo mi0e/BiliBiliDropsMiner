@@ -10,6 +10,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from bilibili_drops_miner.gui_parts.styles import DIALOG_STYLE
+
 
 def show_update_available_dialog(
     parent: QWidget,
@@ -22,15 +24,7 @@ def show_update_available_dialog(
     dialog.setWindowTitle("发现新版本")
     dialog.setModal(True)
     dialog.setMinimumWidth(430)
-    dialog.setStyleSheet(
-        "QDialog{background:#1f232b;color:#e6e7eb;}"
-        "QLabel{color:#e6e7eb;}"
-        "QPushButton{background:#2f343e;color:#e6e7eb;border:1px solid #3a3f4b;"
-        "border-radius:6px;padding:8px 18px;min-width:92px;}"
-        "QPushButton:hover{background:#3a4150;border-color:#4f8cff;}"
-        "QPushButton#primary{background:#4f8cff;color:#ffffff;border-color:#4f8cff;}"
-        "QPushButton#primary:hover{background:#3b73e6;}"
-    )
+    dialog.setStyleSheet(DIALOG_STYLE)
 
     layout = QVBoxLayout(dialog)
     layout.setContentsMargins(24, 22, 24, 20)

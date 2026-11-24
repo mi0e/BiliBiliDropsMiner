@@ -269,13 +269,9 @@ class BilibiliWatchTimeMiner:
                     next_login_check = (
                         time.monotonic() + LOGIN_WATCHDOG_INTERVAL_SECONDS
                     )
-                for thread in self._threads:
-                    # 每个存活线程单独 join(0.5)，2048 个线程会把停止请求拖延
-                    # 到 1024 秒之后才进入 finally。停止一旦被请求就立刻离开
-                    # 这一轮，把剩余时间交给带总预算的停机循环。
-                    if self._stop_event.is_set():
-                        break
-                    thread.join(timeout=0.5)
+                # 等停止事件而不是逐个 join：逐个 join(0.5) 让一轮耗时随会话数
+                # 线性增长（128 会话约 64 秒），登录复检被拖得远超 60 秒。
+                self._stop_event.wait(timeout=0.5)
         except KeyboardInterrupt:
             LOGGER.info("收到停止信号，正在停止...")
             self.stop()

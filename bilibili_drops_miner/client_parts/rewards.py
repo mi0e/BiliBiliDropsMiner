@@ -28,10 +28,15 @@ def parse_mission_reward_info(
 
     data = payload.get("data") or {}
     reward_info = data.get("reward_info") or {}
+    try:
+        status = int(data.get("status"))
+    except (TypeError, ValueError):
+        # 缺失或无法识别时不能落到 0（可领取），否则会带空 act_id 发领奖请求。
+        status = -1
     return MissionRewardInfo(
         task_id=str(data.get("task_id") or normalized_id),
         task_name=str(data.get("task_name") or normalized_id),
-        status=int(data.get("status") or 0),
+        status=status,
         message=str(data.get("message") or ""),
         act_id=str(data.get("act_id") or ""),
         act_name=str(data.get("act_name") or ""),

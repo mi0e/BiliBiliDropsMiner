@@ -43,21 +43,24 @@ from bilibili_drops_miner.gui_parts.update_checker import (
     normalize_version,
     should_check_update,
 )
+from bilibili_drops_miner.gui_parts.about_dialog import show_about_dialog
 from bilibili_drops_miner.gui_parts.update_dialog import show_update_available_dialog
 from bilibili_drops_miner.gui_parts.worker_controller import WorkerController
 from bilibili_drops_miner.logging_utils import setup_logging
-from bilibili_drops_miner.utils import parse_room_ids, parse_task_ids
+from bilibili_drops_miner.utils import parse_notify_urls, parse_room_ids, parse_task_ids
 
 try:
     from bilibili_drops_miner._version import (
         APP_VERSION,
         LATEST_RELEASE_API,
         RELEASES_URL,
+        REPOSITORY_URL,
         UPDATE_CHANNEL,
     )
 except Exception:
     APP_VERSION = "0.0.0+dev"
     UPDATE_CHANNEL = "dev"
+    REPOSITORY_URL = "https://github.com/mi0e/BiliBiliDropsMiner"
     LATEST_RELEASE_API = (
         "https://api.github.com/repos/mi0e/BiliBiliDropsMiner/releases/latest"
     )
@@ -180,6 +183,7 @@ class MinerGUI(QMainWindow):
                 claim_rewards=self.claim_rewards,
                 refresh_tasks=self.refresh_tasks,
                 toggle_log=self._toggle_log,
+                show_about=self.show_about,
             ),
         )
         self.cookie_edit = widgets.cookie_edit
@@ -194,9 +198,10 @@ class MinerGUI(QMainWindow):
         self.progress_bar = widgets.progress_bar
         self.task_text = widgets.task_text
         self.log_text = widgets.log_text
-        self.log_card = widgets.log_card
         self._log_toggle_btn = widgets.log_toggle_btn
         self.claim_rewards_btn = widgets.claim_rewards_btn
+        self.start_btn = widgets.start_btn
+        self.stop_btn = widgets.stop_btn
         self.auto_claim_rewards_check = widgets.auto_claim_rewards_check
         self.account_status_label = widgets.account_status_label
         self._log_expanded = False
@@ -330,6 +335,15 @@ class MinerGUI(QMainWindow):
         ):
             webbrowser.open(release_url)
 
+    def show_about(self, *_args) -> None:
+        show_about_dialog(
+            self,
+            app_version=APP_VERSION,
+            update_channel=UPDATE_CHANNEL,
+            repository_url=REPOSITORY_URL,
+            releases_url=RELEASES_URL,
+        )
+
     # ---------- config ----------
 
     def _build_config(self) -> MinerConfig:
@@ -342,7 +356,7 @@ class MinerGUI(QMainWindow):
             task_query_interval_seconds=int(
                 self.task_interval_edit.text().strip() or "30"
             ),
-            notify_urls=parse_task_ids(self.notify_urls_edit.text().strip()),
+            notify_urls=parse_notify_urls(self.notify_urls_edit.text().strip()),
             notify_on_task_complete=not self.disable_task_notify_check.isChecked(),
         )
 
@@ -390,6 +404,7 @@ class MinerGUI(QMainWindow):
         self._config_sync_timer.start()
         self._schedule_live_watch_time_refresh()
         self._schedule_task_refresh()
+        self._update_run_buttons()
 
     def stop(self) -> None:
         logger = logging.getLogger(__name__)
@@ -409,6 +424,17 @@ class MinerGUI(QMainWindow):
                 self._show_warning(
                     "停止未完成", self.worker_controller.stop_incomplete_message()
                 )
+        self._update_run_buttons()
+
+    def _update_run_buttons(self) -> None:
+        # 与 WorkerController.start() 的放行条件一致：持有 owner 线程（运行中、
+        # 停止中或停止未完成）时只能停止，完全释放后才能再次启动。
+        if not self._ui_alive:
+            return
+        busy = self.worker_controller.has_thread
+        for button, enabled in ((self.start_btn, not busy), (self.stop_btn, busy)):
+            button.setEnabled(enabled)
+            button.setCursor(Qt.PointingHandCursor if enabled else Qt.ArrowCursor)
 
     def _poll_worker_shutdown(self) -> None:
         logger = logging.getLogger(__name__)
@@ -417,6 +443,7 @@ class MinerGUI(QMainWindow):
         miner = self.worker_controller.miner
         login_invalidated = bool(miner and miner.login_invalidated)
         result = self.worker_controller.poll_shutdown(logger=logger)
+        self._update_run_buttons()
         if result in {"no_thread", "stopped"}:
             self._stop_poll_timer.stop()
             self._finalize_runtime_ui()
@@ -513,33 +540,6 @@ class MinerGUI(QMainWindow):
         # QPushButton.clicked may pass a bool (checked) — ignore positional args.
         self.task_controller.claim_rewards()
 
-    @staticmethod
-    def _find_browser(name: str) -> bool:
-        return BrowserActions.find_browser(name)
-
-    @staticmethod
-    def _detect_default_browser() -> str | None:
-        return BrowserActions.detect_default_browser()
-
-    @staticmethod
-    def _available_browsers() -> list[str]:
-        return BrowserActions.available_browsers()
-
-    @staticmethod
-    def _browser_label(browser: str) -> str:
-        return BrowserActions.browser_label(browser)
-
-    def _pick_browser(self) -> str | None:
-        return self.browser_actions.pick_browser()
-
-    @staticmethod
-    def _browser_try_order(preferred: str | None) -> tuple[str, ...]:
-        return BrowserActions.browser_try_order(preferred)
-
-    @staticmethod
-    def _extract_room_id_from_live_url(text: str) -> int | None:
-        return BrowserActions.extract_room_id_from_live_url(text)
-
     def _apply_auto_room_id(self, room_id: int) -> None:
         self.rooms_edit.setText(str(room_id))
 
@@ -617,35 +617,6 @@ class MinerGUI(QMainWindow):
     def _apply_auto_task_ids(self, task_ids_str: str) -> None:
         self.task_ids_edit.setText(task_ids_str)
 
-    def _apply_selected_task_group(
-        self,
-        room_id: int | None,
-        task_groups: list[dict[str, object]],
-    ) -> None:
-        self.browser_actions.apply_selected_task_group(room_id, task_groups)
-
-    def _browser_sniff(
-        self,
-        url_keyword: str | None,
-        hint: str,
-        on_network_match=None,
-        on_cookies=None,
-        on_page_url=None,
-        on_page_html=None,
-        browser_preference: str | None = None,
-        finish_on_any: bool = False,
-    ) -> None:
-        self.browser_actions.browser_sniff(
-            url_keyword,
-            hint,
-            on_network_match=on_network_match,
-            on_cookies=on_cookies,
-            on_page_url=on_page_url,
-            on_page_html=on_page_html,
-            browser_preference=browser_preference,
-            finish_on_any=finish_on_any,
-        )
-
     def auto_fetch_room_id(self) -> None:
         self.browser_actions.auto_fetch_room_id()
 
@@ -674,10 +645,6 @@ class MinerGUI(QMainWindow):
         self.browser_actions.auto_fetch_task_ids_mode2(
             room_id=room_ids[0] if room_ids else None
         )
-
-    def auto_fetch_task_ids(self) -> None:
-        """Backward-compatible alias for browser automation mode 2."""
-        self.auto_fetch_task_ids_mode2()
 
     def auto_fetch_cookie(self) -> None:
         self.browser_actions.auto_fetch_cookie()
@@ -727,7 +694,9 @@ class MinerGUI(QMainWindow):
         miner = worker.miner
         if worker.has_thread and not worker.is_running:
             login_invalidated = bool(miner and miner.login_invalidated)
-            if worker.poll_shutdown(logger=logging.getLogger(__name__)) == "stopped_incomplete":
+            result = worker.poll_shutdown(logger=logging.getLogger(__name__))
+            self._update_run_buttons()
+            if result == "stopped_incomplete":
                 self._enter_stop_incomplete(login_invalidated)
                 return
             self._finalize_runtime_ui()
@@ -764,7 +733,7 @@ class MinerGUI(QMainWindow):
         if new_task_ids != config.task_ids:
             config.task_ids = new_task_ids
 
-        new_notify_urls = parse_task_ids(self.notify_urls_edit.text().strip())
+        new_notify_urls = parse_notify_urls(self.notify_urls_edit.text().strip())
         if new_notify_urls != config.notify_urls:
             miner.update_notifier(new_notify_urls)
 

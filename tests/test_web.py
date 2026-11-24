@@ -160,6 +160,21 @@ class WebTests(unittest.TestCase):
         self.assertEqual(response.json()["groups"], [])
         self.assertEqual(response.json()["selected"], [])
 
+    def test_failed_save_rolls_back_state_and_returns_safe_500(self):
+        state = self.app.state.web
+        self.login()
+        self.post("settings", {"room_ids": [123]})
+        state.groups, state.selected = [{"task_ids": ["old"]}], [0]
+        before = (state.cookie, state.settings, state.groups, state.selected, state.generation)
+        with patch.object(WebState, "save", side_effect=OSError("disk full " + COOKIE)):
+            responses = [self.post("settings", {"room_ids": [456]}), self.post("logout")]
+        for response in responses:
+            self.assertEqual(response.status_code, 500)
+            self.assertNotIn("test-secret", response.text)
+            self.assertEqual(response.headers["X-Frame-Options"], "DENY")
+        after = (state.cookie, state.settings, state.groups, state.selected, state.generation)
+        self.assertEqual(after, before)
+
     def test_qr_credentials_persist_only_on_server_and_logout_clears(self):
         self.login()
         response = self.client.get("/api/state")

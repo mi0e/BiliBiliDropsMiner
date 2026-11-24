@@ -41,6 +41,7 @@ class MainWindowCallbacks:
     claim_rewards: Callable[..., None]
     refresh_tasks: Callable[..., None]
     toggle_log: Callable[..., None]
+    show_about: Callable[..., None]
 
 
 @dataclass(slots=True)
@@ -62,6 +63,8 @@ class MainWindowWidgets:
     claim_rewards_btn: QPushButton
     auto_claim_rewards_check: QCheckBox
     account_status_label: QLabel
+    start_btn: QPushButton
+    stop_btn: QPushButton
 
 
 def build_main_window_layout(
@@ -88,7 +91,19 @@ def build_main_window_layout(
     title_font.setBold(True)
     title.setFont(title_font)
     title.setStyleSheet("color:#f5f6f8;padding:2px 0 6px 0;")
-    config_layout.addWidget(title)
+    about_btn = QPushButton("关于")
+    about_btn.setFlat(True)
+    about_btn.setCursor(Qt.PointingHandCursor)
+    about_btn.setStyleSheet(
+        "QPushButton{padding:2px 0 6px 4px;border:0;background:transparent;color:#9aa0a6;}"
+        "QPushButton:hover{color:#4f8cff;}"
+    )
+    about_btn.clicked.connect(callbacks.show_about)
+    title_row = QHBoxLayout()
+    title_row.addWidget(title)
+    title_row.addStretch(1)
+    title_row.addWidget(about_btn)
+    config_layout.addLayout(title_row)
 
     cookie_edit = _make_line_edit("必填: SESSDATA=xxx; bili_jct=xxx; DedeUserID=xxx")
     rooms_edit = _make_line_edit("必填: 直播间号，多个用逗号分隔")
@@ -154,8 +169,11 @@ def build_main_window_layout(
 
     btn_row = QHBoxLayout()
     btn_row.setSpacing(8)
-    btn_row.addWidget(_make_button("启动", "green", callbacks.start))
-    btn_row.addWidget(_make_button("停止", "red", callbacks.stop))
+    start_btn = _make_button("启动", "green", callbacks.start)
+    stop_btn = _make_button("停止", "red", callbacks.stop)
+    stop_btn.setEnabled(False)
+    btn_row.addWidget(start_btn)
+    btn_row.addWidget(stop_btn)
     btn_row.addWidget(_make_button("加载配置", "", callbacks.load_config))
     btn_row.addWidget(_make_button("保存配置", "", callbacks.save_config))
     btn_row.addWidget(_make_button("清空日志", "gray", callbacks.clear_logs))
@@ -272,6 +290,8 @@ def build_main_window_layout(
         claim_rewards_btn=claim_rewards_btn,
         auto_claim_rewards_check=auto_claim_rewards_check,
         account_status_label=account_status_label,
+        start_btn=start_btn,
+        stop_btn=stop_btn,
     )
 
 
