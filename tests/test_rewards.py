@@ -17,11 +17,29 @@ from bilibili_drops_miner.client_parts.models import (
 )
 from bilibili_drops_miner.client_parts.rewards import (
     REWARD_CLAIM_INTERVAL_SECONDS,
+    parse_mission_reward_info,
 )
 from bilibili_drops_miner.client_parts.tasks import (
     parse_task_progress_payload,
     resolve_reward_task_ids,
 )
+
+
+class MissionRewardInfoParsingTest(unittest.TestCase):
+    def _parse(self, data: dict) -> MissionRewardInfo:
+        return parse_mission_reward_info({"code": 0, "data": data}, normalized_id="t1")
+
+    def test_missing_or_invalid_status_is_not_claimable(self) -> None:
+        for data in ({}, {"status": None}, {"status": ""}, {"status": "abc"}):
+            with self.subTest(data=data):
+                info = self._parse(data)
+                self.assertFalse(info.is_claimable)
+                self.assertFalse(info.is_claimed)
+
+    def test_explicit_status_values_are_preserved(self) -> None:
+        self.assertTrue(self._parse({"status": 0}).is_claimable)
+        self.assertTrue(self._parse({"status": "0"}).is_claimable)
+        self.assertTrue(self._parse({"status": 6}).is_claimed)
 
 
 def _checkpoint(sid: str) -> TaskCheckpointProgress:

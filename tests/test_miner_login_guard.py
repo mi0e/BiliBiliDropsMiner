@@ -120,6 +120,26 @@ class MinerLoginGuardTest(unittest.TestCase):
             miner.run()
         self.assertTrue(miner.login_invalidated)
 
+    def test_watchdog_interval_does_not_scale_with_session_count(self) -> None:
+        # 旧实现每轮对每个存活线程 join(0.5)：8 个会话一轮 4 秒，复检被推迟。
+        miner = BilibiliWatchTimeMiner(
+            MinerConfig(cookie="cookie", room_ids=list(range(1, 9)))
+        )
+        miner._probe_login = AsyncMock(side_effect=[(42, "user"), (None, "")])
+
+        def thread_entry(*_args) -> None:
+            miner._stop_event.wait(timeout=10)
+
+        with patch.object(miner, "_thread_entry", side_effect=thread_entry), patch(
+            "bilibili_drops_miner.miner.LOGIN_WATCHDOG_INTERVAL_SECONDS", 0.3
+        ):
+            began = time.monotonic()
+            miner.run()
+            elapsed = time.monotonic() - began
+
+        self.assertTrue(miner.login_invalidated)
+        self.assertLess(elapsed, 2.0)
+
     def test_watchdog_network_error_does_not_mark_cookie_invalid(self) -> None:
         miner = BilibiliWatchTimeMiner(config())
         calls = 0

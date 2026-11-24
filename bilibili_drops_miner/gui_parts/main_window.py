@@ -46,7 +46,7 @@ from bilibili_drops_miner.gui_parts.update_checker import (
 from bilibili_drops_miner.gui_parts.update_dialog import show_update_available_dialog
 from bilibili_drops_miner.gui_parts.worker_controller import WorkerController
 from bilibili_drops_miner.logging_utils import setup_logging
-from bilibili_drops_miner.utils import parse_room_ids, parse_task_ids
+from bilibili_drops_miner.utils import parse_notify_urls, parse_room_ids, parse_task_ids
 
 try:
     from bilibili_drops_miner._version import (
@@ -342,7 +342,7 @@ class MinerGUI(QMainWindow):
             task_query_interval_seconds=int(
                 self.task_interval_edit.text().strip() or "30"
             ),
-            notify_urls=parse_task_ids(self.notify_urls_edit.text().strip()),
+            notify_urls=parse_notify_urls(self.notify_urls_edit.text().strip()),
             notify_on_task_complete=not self.disable_task_notify_check.isChecked(),
         )
 
@@ -764,7 +764,7 @@ class MinerGUI(QMainWindow):
         if new_task_ids != config.task_ids:
             config.task_ids = new_task_ids
 
-        new_notify_urls = parse_task_ids(self.notify_urls_edit.text().strip())
+        new_notify_urls = parse_notify_urls(self.notify_urls_edit.text().strip())
         if new_notify_urls != config.notify_urls:
             miner.update_notifier(new_notify_urls)
 

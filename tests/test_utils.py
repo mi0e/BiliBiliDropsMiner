@@ -3,7 +3,27 @@ from __future__ import annotations
 import json
 import unittest
 
-from bilibili_drops_miner.utils import extract_bili_live_task_groups
+from bilibili_drops_miner.utils import (
+    extract_bili_live_task_groups,
+    parse_notify_urls,
+    parse_task_ids,
+)
+
+
+class ParseNotifyUrlsTests(unittest.TestCase):
+    def test_keeps_all_query_parameters(self) -> None:
+        raw = "gotify://h/t?priority=8&format=markdown, wxwork://c/1/s/?to=@all&safe=0\nschan://KEY"
+        self.assertEqual(
+            parse_notify_urls(raw),
+            [
+                "gotify://h/t?priority=8&format=markdown",
+                "wxwork://c/1/s/?to=@all&safe=0",
+                "schan://KEY",
+            ],
+        )
+
+    def test_task_id_parsing_still_truncates_at_ampersand(self) -> None:
+        self.assertEqual(parse_task_ids("a,b&csrf=x"), ["a", "b"])
 
 
 def _task_group(task_id: str) -> dict:

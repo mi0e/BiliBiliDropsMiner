@@ -6,7 +6,7 @@ import sys
 from bilibili_drops_miner.config import MAX_THREAD_COUNT, MinerConfig
 from bilibili_drops_miner.logging_utils import setup_logging
 from bilibili_drops_miner.miner import BilibiliWatchTimeMiner, StopOutcome
-from bilibili_drops_miner.utils import parse_room_ids, parse_task_ids
+from bilibili_drops_miner.utils import parse_notify_urls, parse_room_ids, parse_task_ids
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -69,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
         cookie = _resolve_cookie(args)
         room_ids = _resolve_rooms(args)
         task_ids = parse_task_ids(args.task_ids)
-        notify_urls = parse_task_ids(args.notify_urls)
+        notify_urls = parse_notify_urls(args.notify_urls)
         config = MinerConfig(
             cookie=cookie,
             room_ids=room_ids,
