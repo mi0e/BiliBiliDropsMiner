@@ -13,10 +13,8 @@ from bilibili_drops_miner.gui_parts.browser_progress import BrowserPreparationDi
 from bilibili_drops_miner.gui_parts.browser_utils import (
     available_browsers,
     browser_label,
-    browser_try_order,
     detect_default_browser,
     extract_room_id_from_live_url,
-    find_browser,
 )
 from bilibili_drops_miner.utils import extract_bili_live_task_groups
 
@@ -46,30 +44,6 @@ class BrowserActions:
         self._task_discovery_pending = False
         self._browser_cancel: threading.Event | None = None
         self._preparation_dialog: BrowserPreparationDialog | None = None
-
-    @staticmethod
-    def find_browser(name: str) -> bool:
-        return find_browser(name)
-
-    @staticmethod
-    def detect_default_browser() -> str | None:
-        return detect_default_browser()
-
-    @staticmethod
-    def available_browsers() -> list[str]:
-        return available_browsers()
-
-    @staticmethod
-    def browser_label(browser: str) -> str:
-        return browser_label(browser)
-
-    @staticmethod
-    def browser_try_order(preferred: str | None) -> tuple[str, ...]:
-        return browser_try_order(preferred)
-
-    @staticmethod
-    def extract_room_id_from_live_url(text: str) -> int | None:
-        return extract_room_id_from_live_url(text)
 
     def pick_browser(self) -> str | None:
         available = available_browsers()
@@ -397,10 +371,6 @@ class BrowserActions:
                 else None
             ),
         )
-
-    def auto_fetch_task_ids(self, room_id: int | None = None) -> None:
-        """Backward-compatible alias for browser automation mode 2."""
-        self.auto_fetch_task_ids_mode2(room_id)
 
     def auto_fetch_cookie(self) -> None:
         ok = QMessageBox.question(

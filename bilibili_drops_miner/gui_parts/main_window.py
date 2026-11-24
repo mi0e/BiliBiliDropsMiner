@@ -194,7 +194,6 @@ class MinerGUI(QMainWindow):
         self.progress_bar = widgets.progress_bar
         self.task_text = widgets.task_text
         self.log_text = widgets.log_text
-        self.log_card = widgets.log_card
         self._log_toggle_btn = widgets.log_toggle_btn
         self.claim_rewards_btn = widgets.claim_rewards_btn
         self.auto_claim_rewards_check = widgets.auto_claim_rewards_check
@@ -513,33 +512,6 @@ class MinerGUI(QMainWindow):
         # QPushButton.clicked may pass a bool (checked) — ignore positional args.
         self.task_controller.claim_rewards()
 
-    @staticmethod
-    def _find_browser(name: str) -> bool:
-        return BrowserActions.find_browser(name)
-
-    @staticmethod
-    def _detect_default_browser() -> str | None:
-        return BrowserActions.detect_default_browser()
-
-    @staticmethod
-    def _available_browsers() -> list[str]:
-        return BrowserActions.available_browsers()
-
-    @staticmethod
-    def _browser_label(browser: str) -> str:
-        return BrowserActions.browser_label(browser)
-
-    def _pick_browser(self) -> str | None:
-        return self.browser_actions.pick_browser()
-
-    @staticmethod
-    def _browser_try_order(preferred: str | None) -> tuple[str, ...]:
-        return BrowserActions.browser_try_order(preferred)
-
-    @staticmethod
-    def _extract_room_id_from_live_url(text: str) -> int | None:
-        return BrowserActions.extract_room_id_from_live_url(text)
-
     def _apply_auto_room_id(self, room_id: int) -> None:
         self.rooms_edit.setText(str(room_id))
 
@@ -617,35 +589,6 @@ class MinerGUI(QMainWindow):
     def _apply_auto_task_ids(self, task_ids_str: str) -> None:
         self.task_ids_edit.setText(task_ids_str)
 
-    def _apply_selected_task_group(
-        self,
-        room_id: int | None,
-        task_groups: list[dict[str, object]],
-    ) -> None:
-        self.browser_actions.apply_selected_task_group(room_id, task_groups)
-
-    def _browser_sniff(
-        self,
-        url_keyword: str | None,
-        hint: str,
-        on_network_match=None,
-        on_cookies=None,
-        on_page_url=None,
-        on_page_html=None,
-        browser_preference: str | None = None,
-        finish_on_any: bool = False,
-    ) -> None:
-        self.browser_actions.browser_sniff(
-            url_keyword,
-            hint,
-            on_network_match=on_network_match,
-            on_cookies=on_cookies,
-            on_page_url=on_page_url,
-            on_page_html=on_page_html,
-            browser_preference=browser_preference,
-            finish_on_any=finish_on_any,
-        )
-
     def auto_fetch_room_id(self) -> None:
         self.browser_actions.auto_fetch_room_id()
 
@@ -674,10 +617,6 @@ class MinerGUI(QMainWindow):
         self.browser_actions.auto_fetch_task_ids_mode2(
             room_id=room_ids[0] if room_ids else None
         )
-
-    def auto_fetch_task_ids(self) -> None:
-        """Backward-compatible alias for browser automation mode 2."""
-        self.auto_fetch_task_ids_mode2()
 
     def auto_fetch_cookie(self) -> None:
         self.browser_actions.auto_fetch_cookie()
